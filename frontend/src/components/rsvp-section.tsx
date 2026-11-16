@@ -87,7 +87,7 @@ function RsvpForm({
   const required = requiresGuestName(view, siteConfig.rsvpNameMode);
   const prefill = view.kind === 'personal' && siteConfig.rsvpNameMode === 'prefill-input';
   const showName = view.kind === 'personal' && siteConfig.rsvpNameMode === 'show-name';
-  const needsTurnstile = required && view.kind !== 'personal' && Boolean(env.turnstileSiteKey);
+  const needsTurnstile = view.kind === 'shared-rsvp' && Boolean(env.turnstileSiteKey);
   const caption = deadlineCaption(invitation.rsvp.deadline);
 
   useEffect(() => {
@@ -114,6 +114,10 @@ function RsvpForm({
     if (phase.name === 'form' && phase.banner !== 'none') bannerRef.current?.focus();
     if (phase.name === 'form' && phase.nameError) nameRef.current?.focus();
   }, [phase]);
+
+  useEffect(() => {
+    if (editingName) nameRef.current?.focus();
+  }, [editingName]);
 
   function beginEdit() {
     if (!response) return;
@@ -215,9 +219,9 @@ function RsvpForm({
           {showName ? <p className="body-strong">{preset}</p> : null}
           {prefill && !editingName ? (
             <div className="name-preset">
-              <p className="body-strong">{name || preset}</p>
+              <p className="body-strong">{preset} 님으로 응답해요</p>
               <button type="button" className="btn-text" onClick={() => setEditingName(true)}>
-                {preset}님이 아니신가요?
+                {preset} 님이 아니신가요?
               </button>
             </div>
           ) : null}

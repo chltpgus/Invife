@@ -15,8 +15,8 @@ export type SharedInvitationRsvp = 'notice' | 'inline-form';
 
 export const siteConfig = {
   /**
-   * 기획안: 링크로 들어온 RSVP 는 이름을 미리 채우고 「OO님이 아니신가요?」로 고칠 수 있다.
-   * hidden · show-name 은 스펙 Q6 를 남겨 둔 스위치다.
+   * 받는 사람 링크 RSVP 는 「OO 님으로 응답해요」와 「OO 님이 아니신가요?」.
+   * hidden · show-name 은 그 칸만 바꾸는 스위치다.
    */
   rsvpNameMode: 'prefill-input' as RsvpNameMode,
 
