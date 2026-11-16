@@ -6,6 +6,12 @@ const config: NextConfig = {
   poweredByHeader: false,
   reactStrictMode: true,
   images: { unoptimized: true },
+  async rewrites() {
+    return [
+      { source: '/i/:slug/g/:token', destination: '/i/:slug' },
+      { source: '/i/:slug/s/:token', destination: '/i/:slug' },
+    ];
+  },
 };
 
 export default config;

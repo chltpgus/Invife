@@ -1,0 +1,5 @@
+# 정적 호스트(Cloudflare Pages, Netlify). 주소는 유지하고 슬러그 셸을 보여 준다.
+/i/:slug/g/:token   /i/:slug/index.html   200
+/i/:slug/g/:token/  /i/:slug/index.html   200
+/i/:slug/s/:token   /i/:slug/index.html   200
+/i/:slug/s/:token/  /i/:slug/index.html   200

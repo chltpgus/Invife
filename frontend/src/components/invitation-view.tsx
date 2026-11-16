@@ -1,11 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { siteConfig } from '@/config';
+import { useCallback, useEffect, useState } from 'react';
+import { usePathname } from 'next/navigation';
 import { Accounts } from '@/components/accounts';
 import { Cover } from '@/components/cover';
 import { Directions } from '@/components/directions';
-import { EndedView } from '@/components/ended-view';
+import { EndedView, NotFoundView } from '@/components/ended-view';
 import { Envelope } from '@/components/envelope';
 import { Gallery } from '@/components/gallery';
 import { QuickNav, type NavItem } from '@/components/quick-nav';
@@ -14,33 +14,26 @@ import { ShareButton } from '@/components/share-button';
 import { Story } from '@/components/story';
 import { ToastProvider } from '@/components/toast';
 import { When } from '@/components/when';
-import { isEventEnded } from '@/domain/dates';
-import type { FixtureRsvpMode, GuestView, Invitation } from '@/domain/types';
+import { parseGuestPath } from '@/domain/links';
+import type { Invitation } from '@/domain/types';
 import { sectionFlags } from '@/domain/visibility';
 
-export function InvitationView({
-  invitation,
-  view,
-  mode,
-  generatedAt,
-}: {
-  invitation: Invitation;
-  view: GuestView;
-  mode: FixtureRsvpMode;
-  generatedAt: string;
-}) {
-  const [now, setNow] = useState(generatedAt);
+export function InvitationView({ invitation }: { invitation: Invitation }) {
+  const pathname = usePathname();
+  const link = parseGuestPath(pathname, invitation.slug);
+  const [ended, setEnded] = useState(false);
   const [viewer, setViewer] = useState<number | null>(null);
   const [envelope, setEnvelope] = useState(true);
   const [navOn, setNavOn] = useState(false);
   const [current, setCurrent] = useState('');
   const [keyboard, setKeyboard] = useState(false);
   const [accountsOpen, setAccountsOpen] = useState({ groom: false, bride: false });
+  const [missing, setMissing] = useState(false);
+  const markMissing = useCallback(() => setMissing(true), []);
   const flags = sectionFlags(invitation);
-  const ended = isEventEnded(new Date(now), invitation.ceremony.date, siteConfig.endedEventAt);
 
   useEffect(() => {
-    setNow(new Date().toISOString());
+    setEnded(document.documentElement.dataset.ended === '1');
     setEnvelope(document.documentElement.dataset.envelope === 'show');
   }, []);
 
@@ -56,7 +49,7 @@ export function InvitationView({
     );
     observer.observe(cover);
     return () => observer.disconnect();
-  }, [ended]);
+  }, [ended, link]);
 
   useEffect(() => {
     const nodes = ['directions', 'accounts', 'rsvp']
@@ -74,7 +67,7 @@ export function InvitationView({
     );
     nodes.forEach((node) => observer.observe(node));
     return () => observer.disconnect();
-  }, [ended]);
+  }, [ended, link]);
 
   useEffect(() => {
     const viewport = window.visualViewport;
@@ -84,6 +77,7 @@ export function InvitationView({
     return () => viewport.removeEventListener('resize', onResize);
   }, []);
 
+  if (!link || missing) return <NotFoundView />;
   if (ended) return <EndedView invitation={invitation} />;
 
   const items: NavItem[] = [];
@@ -107,7 +101,7 @@ export function InvitationView({
           open={accountsOpen}
           onToggle={(side) => setAccountsOpen((currentOpen) => ({ ...currentOpen, [side]: !currentOpen[side] }))}
         />
-        <RsvpSection invitation={invitation} view={view} mode={mode} now={now} hasContact={flags.contact} />
+        <RsvpSection invitation={invitation} link={link} hasContact={flags.contact} onMissing={markMissing} />
         <ShareButton invitation={invitation} />
       </div>
       <QuickNav

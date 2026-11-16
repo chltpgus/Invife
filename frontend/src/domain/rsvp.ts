@@ -1,14 +1,16 @@
-import type { RsvpNameMode } from '@/config';
-import type { GuestView, RsvpResponse, RsvpSubmitResult } from '@/domain/types';
+import type { GuestLink, RsvpChannel, RsvpResponse, RsvpSubmitResult, StoredEdit } from '@/domain/types';
 
 export const COMPANION_MIN = 0;
 export const COMPANION_MAX = 10;
+
+export type FormBanner = 'none' | 'error' | 'rate_limited' | 'unavailable' | 'edit_forbidden' | 'turnstile' | 'validation';
 
 export type RsvpPhase =
   | {
       name: 'form';
       intent: 'create' | 'edit';
-      banner: 'none' | 'error' | 'rate_limited';
+      banner: FormBanner;
+      retryAfter?: number;
       submitting: boolean;
       nameError: string | null;
     }
@@ -21,21 +23,16 @@ export function initialPhase(closed: boolean, existing: RsvpResponse | null): Rs
   return { name: 'form', intent: 'create', banner: 'none', submitting: false, nameError: null };
 }
 
-export function requiresGuestName(view: GuestView, mode: RsvpNameMode): boolean {
-  if (view.kind === 'shared-rsvp' || view.kind === 'revoked-personal') return true;
-  if (view.kind === 'shared-invitation') return view.rsvp === 'inline-form';
-  return mode === 'prefill-input';
+export function normalizeGuestName(name: string): string {
+  return name.trim().normalize('NFC');
 }
 
-export function showsPersonalName(view: GuestView, mode: RsvpNameMode): boolean {
-  return view.kind === 'personal' && mode !== 'hidden';
-}
-
-export function validateGuestName(name: string, required: boolean): string | null {
-  if (!required) return null;
-  const trimmed = name.trim();
-  if (!trimmed) return '이름을 입력해 주세요';
-  if ([...trimmed].length > 20) return '이름은 20자까지 입력할 수 있어요';
+/** 1–20 코드 포인트. 앞뒤 공백을 빼고 NFC 로 맞춘 뒤 센다. */
+export function validateGuestName(name: string): string | null {
+  const normalized = normalizeGuestName(name);
+  const length = [...normalized].length;
+  if (length < 1) return '이름을 입력해 주세요';
+  if (length > 20) return '이름은 20자까지 입력할 수 있어요';
   return null;
 }
 
@@ -54,48 +51,68 @@ export function responseSummary(response: Pick<RsvpResponse, 'attending' | 'comp
   return core;
 }
 
-export function summaryShowsName(view: GuestView, mode: RsvpNameMode): boolean {
-  if (view.kind === 'personal') return mode !== 'hidden';
-  if (view.kind === 'shared-invitation') return view.rsvp === 'inline-form';
-  return view.kind === 'shared-rsvp' || view.kind === 'revoked-personal';
+export function validationCopy(field: string | undefined, reason: string | undefined): { nameError: string | null; banner: FormBanner } {
+  if (field === 'name') {
+    if (reason === 'too_long') return { nameError: '이름은 20자까지 입력할 수 있어요', banner: 'none' };
+    return { nameError: '이름을 입력해 주세요', banner: 'none' };
+  }
+  if (field === 'companions') return { nameError: null, banner: 'validation' };
+  return { nameError: null, banner: 'validation' };
 }
 
 export function phaseAfterResult(result: RsvpSubmitResult, edited: boolean): RsvpPhase | null {
   if (result.ok) return { name: 'success', edited };
   if (result.code === 'closed') return { name: 'closed' };
-  if (result.code === 'rate_limited') {
-    return { name: 'form', intent: edited ? 'edit' : 'create', banner: 'rate_limited', submitting: false, nameError: null };
-  }
+  if (result.code === 'not_found') return null;
+  const intent = edited ? 'edit' : 'create';
   if (result.code === 'validation') {
-    return {
-      name: 'form',
-      intent: edited ? 'edit' : 'create',
-      banner: 'none',
-      submitting: false,
-      nameError: '이름을 입력해 주세요',
-    };
+    const copy = validationCopy(result.field, result.reason);
+    return { name: 'form', intent, banner: copy.banner, submitting: false, nameError: copy.nameError };
   }
-  return { name: 'form', intent: edited ? 'edit' : 'create', banner: 'error', submitting: false, nameError: null };
+  if (result.code === 'rate_limited') {
+    return { name: 'form', intent, banner: 'rate_limited', retryAfter: result.retryAfter, submitting: false, nameError: null };
+  }
+  if (result.code === 'turnstile_failed') {
+    return { name: 'form', intent, banner: 'turnstile', submitting: false, nameError: null };
+  }
+  if (result.code === 'edit_forbidden') {
+    return { name: 'form', intent, banner: 'edit_forbidden', submitting: false, nameError: null };
+  }
+  if (result.code === 'unavailable') {
+    return { name: 'form', intent, banner: 'unavailable', submitting: false, nameError: null };
+  }
+  if (result.code === 'revoked') {
+    return { name: 'form', intent: 'create', banner: 'none', submitting: false, nameError: null };
+  }
+  return { name: 'form', intent, banner: 'error', submitting: false, nameError: null };
 }
 
 export function submitLabel(phase: RsvpPhase): string {
   if (phase.name !== 'form') return '참석 여부 전달하기';
   if (phase.submitting) return '보내는 중…';
-  if (phase.banner === 'error' || phase.banner === 'rate_limited') return '다시 보내기';
+  if (phase.banner === 'error' || phase.banner === 'rate_limited' || phase.banner === 'unavailable' || phase.banner === 'turnstile') {
+    return '다시 보내기';
+  }
   if (phase.intent === 'edit') return '수정 내용 전달하기';
   return '참석 여부 전달하기';
 }
 
-export function storageKeyFor(invitationId: string, view: GuestView): string {
-  if (view.kind === 'personal') return `invife:rsvp:${invitationId}:personal:${view.token}`;
-  if (view.kind === 'revoked-personal') return `invife:rsvp:${invitationId}:revoked:${view.token}`;
-  if (view.kind === 'shared-rsvp') return `invife:rsvp:${invitationId}:shared:${view.token}`;
-  if (view.rsvp === 'inline-form') return `invife:rsvp:${invitationId}:shared:${view.sharedRsvpToken}`;
-  return `invife:rsvp:${invitationId}:shared-invitation`;
+export function needsTurnstile(link: GuestLink, revoked: boolean): boolean {
+  return revoked || link.channel !== 'personal';
 }
 
-export function linkToken(view: GuestView): string | undefined {
-  if (view.kind === 'personal' || view.kind === 'revoked-personal' || view.kind === 'shared-rsvp') return view.token;
-  if (view.kind === 'shared-invitation' && view.rsvp === 'inline-form') return view.sharedRsvpToken;
-  return undefined;
+export function editStorageKey(slug: string, channel: Extract<RsvpChannel, 'invite' | 'rsvp_link'>, token?: string): string {
+  if (channel === 'invite') return `invife:rsvp:${slug}:invite`;
+  return `invife:rsvp:${slug}:rsvp_link:${token ?? ''}`;
+}
+
+export function readStoredEdit(raw: string | null): StoredEdit | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as StoredEdit;
+    if (!parsed.responseId || !parsed.editKey || !parsed.response) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addressSearchLinks, kakaoStaticMapUrl, mapAppLinks, tmapStoreUrl } from '@/maps/deeplinks';
+import { addressSearchLinks, mapAppLinks, tmapStoreUrl } from '@/maps/deeplinks';
 
 describe('지도 딥링크', () => {
   const links = mapAppLinks({
@@ -30,10 +30,4 @@ describe('지도 딥링크', () => {
     expect(addressSearchLinks('서울 강남구').kakao).toBe('https://map.kakao.com/link/search/%EC%84%9C%EC%9A%B8%20%EA%B0%95%EB%82%A8%EA%B5%AC');
   });
 
-  it('정적 지도 URL 은 경도,위도 중심이다', () => {
-    const url = kakaoStaticMapUrl({ lat: 37.5, lng: 127, width: 684, height: 456 });
-    expect(url.startsWith('https://dapi.kakao.com/v2/maps/staticmap?')).toBe(true);
-    expect(url).toContain('center=127%2C37.5');
-    expect(url).toContain('size=684x456');
-  });
 });

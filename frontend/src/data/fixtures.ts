@@ -1,5 +1,5 @@
 import { defaultRsvpDeadline } from '@/domain/dates';
-import type { FixtureRecord, Invitation } from '@/domain/types';
+import type { Invitation } from '@/domain/types';
 import { samplePhotos } from '@/data/generated-photos';
 
 function deadline(date: string): string {
@@ -54,32 +54,9 @@ function shell(input: Pick<Invitation, 'id' | 'slug' | 'theme'> & Partial<Invita
   };
 }
 
-export const fixtures: FixtureRecord[] = [
-  {
-    rsvpMode: 'ok',
-    sharedRsvpToken: 'open-rsvp',
-    invitation: shell({ id: 'inv-full', slug: 'minjun-seoyeon', theme: 'ivory' }),
-    recipients: [
-      { token: 'jihun', name: '김지훈', revoked: false, response: null },
-      {
-        token: 'mina',
-        name: '박미나',
-        revoked: false,
-        response: {
-          id: 'rsvp-mina',
-          attending: true,
-          companions: 1,
-          name: '박미나',
-          updatedAt: '2027-04-02T03:00:00.000Z',
-        },
-      },
-      { token: 'old-link', name: '이준호', revoked: true, response: null },
-    ],
-  },
-  {
-    rsvpMode: 'ok',
-    sharedRsvpToken: 'minimal-rsvp',
-    invitation: shell({
+export const invitations: Invitation[] = [
+  shell({ id: 'inv-full', slug: 'minjun-seoyeon', theme: 'ivory' }),
+  shell({
       id: 'inv-minimal',
       slug: 'minimal-sage',
       theme: 'sage',
@@ -98,12 +75,7 @@ export const fixtures: FixtureRecord[] = [
       accounts: [],
       rsvp: { deadline: deadline('2027-09-04') },
     }),
-    recipients: [],
-  },
-  {
-    rsvpMode: 'ok',
-    sharedRsvpToken: 'family-rsvp',
-    invitation: shell({
+  shell({
       id: 'inv-deceased',
       slug: 'families-mist',
       theme: 'mist',
@@ -138,58 +110,27 @@ export const fixtures: FixtureRecord[] = [
       ],
       rsvp: { deadline: deadline('2027-06-12') },
     }),
-    recipients: [{ token: 'haeun', name: '김하은', revoked: false, response: null }],
-  },
-  {
-    rsvpMode: 'ok',
-    sharedRsvpToken: 'closed-rsvp',
-    invitation: shell({
-      id: 'inv-closed',
-      slug: 'rsvp-closed',
-      theme: 'ivory',
-      ceremony: { ...fullCeremony, date: '2027-08-20', time: '12:00' },
-      photos: samplePhotos.slice(0, 1),
-      rsvp: { deadline: '2026-11-01T14:59:00.000Z' },
-    }),
-    recipients: [
-      { token: 'soon', name: '최수아', revoked: false, response: null },
-      {
-        token: 'done',
-        name: '장우진',
-        revoked: false,
-        response: {
-          id: 'rsvp-done',
-          attending: false,
-          companions: 0,
-          name: '장우진',
-          updatedAt: '2026-10-01T01:00:00.000Z',
-        },
-      },
-    ],
-  },
-  {
-    rsvpMode: 'ok',
-    sharedRsvpToken: 'ended-rsvp',
-    invitation: shell({
-      id: 'inv-ended',
-      slug: 'ended-day',
-      theme: 'sage',
-      ceremony: { ...fullCeremony, date: '2026-10-03', time: '13:00' },
-      photos: samplePhotos.slice(2, 3),
-      rsvp: { deadline: deadline('2026-10-03') },
-    }),
-    recipients: [],
-  },
-  {
-    rsvpMode: 'error',
-    sharedRsvpToken: 'error-rsvp',
-    invitation: shell({
-      id: 'inv-error',
-      slug: 'rsvp-error',
-      theme: 'mist',
-      photos: samplePhotos.slice(0, 1),
-      rsvp: { deadline: deadline('2027-05-15') },
-    }),
-    recipients: [{ token: 'nora', name: '노라', revoked: false, response: null }],
-  },
+  shell({
+    id: 'inv-closed',
+    slug: 'rsvp-closed',
+    theme: 'ivory',
+    ceremony: { ...fullCeremony, date: '2027-08-20', time: '12:00' },
+    photos: samplePhotos.slice(0, 1),
+    rsvp: { deadline: '2026-11-01T14:59:59.999Z' },
+  }),
+  shell({
+    id: 'inv-ended',
+    slug: 'ended-day',
+    theme: 'sage',
+    ceremony: { ...fullCeremony, date: '2026-10-03', time: '13:00' },
+    photos: samplePhotos.slice(2, 3),
+    rsvp: { deadline: deadline('2026-10-03') },
+  }),
+  shell({
+    id: 'inv-error',
+    slug: 'rsvp-error',
+    theme: 'mist',
+    photos: samplePhotos.slice(0, 1),
+    rsvp: { deadline: deadline('2027-05-15') },
+  }),
 ];

@@ -21,9 +21,9 @@ const deadlineIsRequired: Assert<DeadlineIsString> = true;
 void deadlineIsRequired;
 
 describe('예식 기준 시각', () => {
-  it('RSVP 기본 마감은 예식 전날 23:59 KST', () => {
-    expect(defaultRsvpDeadline('2027-05-15').toISOString()).toBe('2027-05-14T14:59:00.000Z');
-    expect(defaultRsvpDeadline('2027-03-01').toISOString()).toBe('2027-02-28T14:59:00.000Z');
+  it('RSVP 기본 마감은 예식 전날 23:59:59.999 KST', () => {
+    expect(defaultRsvpDeadline('2027-05-15').toISOString()).toBe('2027-05-14T14:59:59.999Z');
+    expect(defaultRsvpDeadline('2027-03-01').toISOString()).toBe('2027-02-28T14:59:59.999Z');
   });
 
   it('끝난 행사는 예식 다음 날 00:00 KST', () => {
@@ -32,9 +32,9 @@ describe('예식 기준 시각', () => {
   });
 
   it('마감 시각은 포함하고 그 직후부터 닫는다', () => {
-    const deadline = '2027-05-14T14:59:00.000Z';
+    const deadline = '2027-05-14T14:59:59.999Z';
     expect(isDeadlineClosed(new Date(deadline), deadline)).toBe(false);
-    expect(isDeadlineClosed(new Date('2027-05-14T14:59:00.001Z'), deadline)).toBe(true);
+    expect(isDeadlineClosed(new Date('2027-05-14T15:00:00.000Z'), deadline)).toBe(true);
   });
 
   it('끝난 행사 시각이 되면 바로 전환한다', () => {
@@ -59,6 +59,6 @@ describe('날짜 표기', () => {
   });
 
   it('마감 안내 문구', () => {
-    expect(deadlineCaption('2027-05-14T14:59:00.000Z')).toBe('5월 14일(금)까지 수정할 수 있어요');
+    expect(deadlineCaption('2027-05-14T14:59:59.999Z')).toBe('5월 14일(금)까지 수정할 수 있어요');
   });
 });

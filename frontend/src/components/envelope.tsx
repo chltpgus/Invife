@@ -7,7 +7,7 @@ import { formatEnvelopeDate } from '@/domain/dates';
 import type { Invitation } from '@/domain/types';
 import { resolveAssetUrl } from '@/env';
 
-const storageKey = (id: string) => `invife:opened:${id}`;
+const storageKey = (slug: string) => `invife:opened:${slug}`;
 
 export function Envelope({ invitation, onDone }: { invitation: Invitation; onDone: () => void }) {
   const root = useRef<HTMLDivElement>(null);
@@ -19,7 +19,7 @@ export function Envelope({ invitation, onDone }: { invitation: Invitation; onDon
 
   function remember() {
     try {
-      localStorage.setItem(storageKey(invitation.id), '1');
+      localStorage.setItem(storageKey(invitation.slug), '1');
     } catch {
       /* 저장할 수 없어도 연출은 끝낸다 */
     }

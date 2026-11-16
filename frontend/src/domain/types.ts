@@ -29,6 +29,7 @@ export type Photo = {
   width: number;
   height: number;
   focal: { x: number; y: number };
+  /** R2 상대 키. 페이지가 NEXT_PUBLIC_R2_BASE_URL 을 붙인다. */
   src: { w800: string; w1200: string; w1600: string };
   lqip: string;
 };
@@ -50,8 +51,8 @@ export type Account = {
 };
 
 /**
- * 하객 화면에 내려가는 초대장.
- * rsvp.deadline 은 항상 있다. 제작자가 비우면 저장 시점에 예식 전날 23:59 KST 로 채운다.
+ * 빌드에 들어가는 공개 초대장.
+ * rsvp.deadline 은 서버가 계산해 넣은 ISO 문자열이다. 마감 컬럼이 비면 예식 전날 23:59:59.999 KST.
  */
 export type Invitation = {
   id: string;
@@ -84,6 +85,8 @@ export type Invitation = {
   };
 };
 
+export type RsvpChannel = 'personal' | 'invite' | 'rsvp_link';
+
 export type RsvpResponse = {
   id: string;
   attending: boolean;
@@ -93,53 +96,53 @@ export type RsvpResponse = {
   updatedAt: string;
 };
 
-export type Recipient = {
-  token: string;
-  name: string;
-  revoked: boolean;
-  response: RsvpResponse | null;
-};
-
-/** 빌드가 경로를 만들 때 쓰는 레코드. 공용 RSVP 토큰과 받는 사람 목록은 공개 초대장 JSON 과 분리한다. */
-export type InvitationRecord = {
-  invitation: Invitation;
-  sharedRsvpToken: string;
-  recipients: Recipient[];
-};
-
-export type FixtureRsvpMode = 'ok' | 'error' | 'rate_limited';
-
-export type FixtureRecord = InvitationRecord & {
-  rsvpMode: FixtureRsvpMode;
-};
-
 export type GuestLink =
-  | { type: 'shared-invitation' }
-  | { type: 'personal'; token: string }
-  | { type: 'shared-rsvp'; token: string };
+  | { channel: 'invite' }
+  | { channel: 'personal'; token: string }
+  | { channel: 'rsvp_link'; token: string };
 
-export type GuestView =
-  | { kind: 'shared-invitation'; rsvp: 'notice' }
-  | { kind: 'shared-invitation'; rsvp: 'inline-form'; sharedRsvpToken: string }
-  | { kind: 'shared-rsvp'; token: string }
-  | { kind: 'personal'; token: string; name: string; response: RsvpResponse | null }
-  | { kind: 'revoked-personal'; token: string };
+export type RsvpContext = {
+  status: 'open' | 'closed';
+  deadline: string;
+  link: RsvpChannel;
+  revoked?: boolean;
+  prefillName?: string;
+  response?: RsvpResponse | null;
+};
 
-export type RsvpLinkType = GuestView['kind'];
+export type RsvpContextResult =
+  | { ok: true; context: RsvpContext }
+  | { ok: false; code: 'not_found' | 'unavailable' | 'network' };
 
 export type RsvpSubmitBody = {
   slug: string;
-  linkType: RsvpLinkType;
+  channel: RsvpChannel;
   token?: string;
   name?: string;
   attending: boolean;
   companions: number;
   responseId?: string;
+  editKey?: string;
   turnstileToken?: string;
 };
 
-export type RsvpErrorCode = 'closed' | 'rate_limited' | 'revoked' | 'validation' | 'network';
+export type RsvpErrorCode =
+  | 'validation'
+  | 'turnstile_failed'
+  | 'edit_forbidden'
+  | 'not_found'
+  | 'closed'
+  | 'revoked'
+  | 'rate_limited'
+  | 'unavailable'
+  | 'network';
 
 export type RsvpSubmitResult =
-  | { ok: true; response: RsvpResponse; edited: boolean }
-  | { ok: false; code: RsvpErrorCode };
+  | { ok: true; response: RsvpResponse; edited: boolean; editKey?: string }
+  | { ok: false; code: RsvpErrorCode; field?: string; reason?: string; retryAfter?: number };
+
+export type StoredEdit = {
+  responseId: string;
+  editKey: string;
+  response: RsvpResponse;
+};

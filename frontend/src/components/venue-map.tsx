@@ -1,9 +1,21 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Icon } from '@/components/icon';
 import { env } from '@/env';
-import { kakaoStaticMapUrl } from '@/maps/deeplinks';
+
+type KakaoMaps = {
+  load: (callback: () => void) => void;
+  Map: new (element: HTMLElement, options: { center: unknown; level: number }) => unknown;
+  LatLng: new (lat: number, lng: number) => unknown;
+  Marker: new (options: { position: unknown; map: unknown }) => unknown;
+};
+
+declare global {
+  interface Window {
+    kakao?: { maps: KakaoMaps };
+  }
+}
 
 export function VenueMap({
   lat,
@@ -16,36 +28,41 @@ export function VenueMap({
   alt: string;
   onOpen: () => void;
 }) {
-  const [src, setSrc] = useState<string | null>(null);
-  const [failed, setFailed] = useState(!env.kakaoRestApiKey);
+  const holder = useRef<HTMLDivElement>(null);
+  const [failed, setFailed] = useState(!env.kakaoMapKey);
 
   useEffect(() => {
-    if (!env.kakaoRestApiKey) return;
-    const controller = new AbortController();
-    const url = kakaoStaticMapUrl({ lat, lng, width: 684, height: 456 });
-    fetch(url, {
-      signal: controller.signal,
-      headers: { Authorization: `KakaoAK ${env.kakaoRestApiKey}` },
-    })
-      .then((response) => {
-        if (!response.ok) throw new Error('map');
-        return response.blob();
-      })
-      .then((blob) => setSrc(URL.createObjectURL(blob)))
-      .catch((error: unknown) => {
-        if (error instanceof DOMException && error.name === 'AbortError') return;
+    if (!env.kakaoMapKey) return;
+    let cancelled = false;
+    const script = document.createElement('script');
+    script.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${encodeURIComponent(env.kakaoMapKey)}&autoload=false`;
+    script.async = true;
+    script.onload = () => {
+      const maps = window.kakao?.maps;
+      if (!maps || cancelled) {
         setFailed(true);
+        return;
+      }
+      maps.load(() => {
+        if (cancelled || !holder.current) return;
+        try {
+          const center = new maps.LatLng(lat, lng);
+          const map = new maps.Map(holder.current, { center, level: 3 });
+          new maps.Marker({ position: center, map });
+        } catch {
+          setFailed(true);
+        }
       });
-    return () => controller.abort();
+    };
+    script.onerror = () => setFailed(true);
+    document.head.appendChild(script);
+    return () => {
+      cancelled = true;
+      script.remove();
+    };
   }, [lat, lng]);
 
-  useEffect(() => {
-    return () => {
-      if (src) URL.revokeObjectURL(src);
-    };
-  }, [src]);
-
-  if (failed || (!src && !env.kakaoRestApiKey)) {
+  if (failed) {
     return (
       <div className="map-frame is-failed">
         <Icon name="map-pin" />
@@ -56,8 +73,8 @@ export function VenueMap({
   }
 
   return (
-    <button type="button" className="map-frame" onClick={onOpen}>
-      {src ? <img src={src} alt={alt} /> : <span className="sr-only">지도를 불러오는 중</span>}
+    <button type="button" className="map-frame is-live" onClick={onOpen}>
+      <div ref={holder} className="map-canvas" role="img" aria-label={alt} />
     </button>
   );
 }

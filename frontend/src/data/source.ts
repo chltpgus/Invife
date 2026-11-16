@@ -1,11 +1,9 @@
-import type { FixtureRsvpMode, InvitationRecord } from '@/domain/types';
+import type { Invitation } from '@/domain/types';
 
-export type StaticParam = { slug: string; link: string[] };
+export type StaticParam = { slug: string };
 
-export type LoadedRecord = InvitationRecord & { rsvpMode?: FixtureRsvpMode };
-
-/** 샘플 JSON 과 Supabase/API 를 같은 모양으로 바꾼다. */
+/** 빌드가 보는 공개 초대장. 토큰과 받는 사람 이름은 여기 없다. */
 export interface GuestDataSource {
   listStaticParams(): Promise<StaticParam[]>;
-  getRecord(slug: string): Promise<LoadedRecord | null>;
+  getInvitation(slug: string): Promise<Invitation | null>;
 }

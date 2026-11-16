@@ -1,10 +1,19 @@
-import type { FixtureRsvpMode, RsvpResponse, RsvpSubmitBody, RsvpSubmitResult } from '@/domain/types';
+import { invitations } from '@/data/fixtures';
+import { isDeadlineClosed } from '@/domain/dates';
+import { editStorageKey, normalizeGuestName, readStoredEdit, validateGuestName } from '@/domain/rsvp';
+import type {
+  RsvpContext,
+  RsvpContextResult,
+  RsvpResponse,
+  RsvpSubmitBody,
+  RsvpSubmitResult,
+  StoredEdit,
+} from '@/domain/types';
+import { sampleDirectory } from '@/rsvp/fixture-directory';
 
 export interface RsvpClient {
+  context(input: { slug: string; token?: string }): Promise<RsvpContextResult>;
   submit(body: RsvpSubmitBody): Promise<RsvpSubmitResult>;
-  /** API 가 없을 때 이 기기에 남겨 둔 응답. API 클라이언트는 항상 null 이고, 응답은 페이지 데이터에 있다. */
-  read(storageKey: string): Promise<RsvpResponse | null>;
-  remember(storageKey: string, response: RsvpResponse): void;
 }
 
 export type MemoryStore = {
@@ -31,58 +40,167 @@ export function browserStore(): MemoryStore {
   };
 }
 
-export function createFixtureRsvpClient(mode: FixtureRsvpMode, store: MemoryStore): RsvpClient {
+const personalEdits = new Map<string, RsvpResponse>();
+
+function deadlineFor(slug: string): string | null {
+  return invitations.find((invitation) => invitation.slug === slug)?.rsvp.deadline ?? null;
+}
+
+function contextFor(slug: string, token: string | undefined, now: Date): RsvpContextResult {
+  const sample = sampleDirectory.find((item) => item.slug === slug);
+  const deadline = deadlineFor(slug);
+  if (!sample || !deadline) return { ok: false, code: 'not_found' };
+  if (sample.unavailable) return { ok: false, code: 'unavailable' };
+  const closed = isDeadlineClosed(now, deadline);
+  const status = closed ? 'closed' : 'open';
+  if (!token) return { ok: true, context: { status, deadline, link: 'invite' } };
+  if (token === sample.rsvpToken) return { ok: true, context: { status, deadline, link: 'rsvp_link' } };
+  const recipient = sample.recipients.find((item) => item.token === token);
+  if (!recipient) return { ok: false, code: 'not_found' };
+  if (recipient.revoked) {
+    return { ok: true, context: { status, deadline, link: 'personal', revoked: true } };
+  }
+  const response = personalEdits.get(`${slug}:${token}`) ?? recipient.response;
+  const context: RsvpContext = {
+    status,
+    deadline,
+    link: 'personal',
+    prefillName: recipient.name,
+    response,
+  };
+  return { ok: true, context };
+}
+
+function writeEdit(store: MemoryStore, key: string, edit: StoredEdit) {
+  store.set(key, JSON.stringify(edit));
+}
+
+export function createFixtureRsvpClient(store: MemoryStore, now = () => new Date()): RsvpClient {
   return {
-    async read(storageKey) {
-      const raw = store.get(storageKey);
-      if (!raw) return null;
-      return JSON.parse(raw) as RsvpResponse;
-    },
-    remember(storageKey, response) {
-      store.set(storageKey, JSON.stringify(response));
+    async context(input) {
+      return contextFor(input.slug, input.token, now());
     },
     async submit(body) {
-      if (mode === 'rate_limited') return { ok: false, code: 'rate_limited' };
-      if (mode === 'error') return { ok: false, code: 'network' };
-      const name = body.name?.trim() ?? '';
-      if ((body.linkType === 'shared-rsvp' || body.linkType === 'revoked-personal' || body.linkType === 'shared-invitation') && !name) {
-        return { ok: false, code: 'validation' };
+      const sample = sampleDirectory.find((item) => item.slug === body.slug);
+      if (!sample) return { ok: false, code: 'not_found' };
+      if (sample.unavailable) return { ok: false, code: 'unavailable' };
+      const deadline = deadlineFor(body.slug);
+      if (deadline && isDeadlineClosed(now(), deadline)) return { ok: false, code: 'closed' };
+      if (body.channel === 'personal') {
+        const recipient = sample.recipients.find((item) => item.token === body.token);
+        if (!recipient || !body.token) return { ok: false, code: 'not_found' };
+        if (recipient.revoked) return { ok: false, code: 'revoked' };
+      } else if (body.channel === 'rsvp_link' && body.token !== sample.rsvpToken) {
+        return { ok: false, code: 'not_found' };
+      }
+      if (!body.attending && body.companions !== 0) {
+        return { ok: false, code: 'validation', field: 'companions', reason: 'not_zero' };
+      }
+      const name = normalizeGuestName(body.name ?? '');
+      const nameError = validateGuestName(name);
+      if (nameError) {
+        return { ok: false, code: 'validation', field: 'name', reason: [...name].length > 20 ? 'too_long' : 'required' };
+      }
+      const updatedAt = now().toISOString();
+      if (body.channel === 'personal' && body.token) {
+        const previous = personalEdits.get(`${body.slug}:${body.token}`) ?? sample.recipients.find((item) => item.token === body.token)?.response;
+        const response: RsvpResponse = {
+          id: previous?.id ?? `local-${body.slug}-${body.token}`,
+          attending: body.attending,
+          companions: body.companions,
+          name,
+          updatedAt,
+        };
+        personalEdits.set(`${body.slug}:${body.token}`, response);
+        return { ok: true, response, edited: Boolean(previous) };
+      }
+      const channel = body.channel === 'rsvp_link' ? 'rsvp_link' : 'invite';
+      const key = editStorageKey(body.slug, channel, body.token);
+      if (body.responseId) {
+        const saved = readStoredEdit(store.get(key));
+        if (!saved || saved.editKey !== body.editKey || saved.responseId !== body.responseId) {
+          return { ok: false, code: 'edit_forbidden' };
+        }
+        const response: RsvpResponse = { ...saved.response, attending: body.attending, companions: body.companions, name, updatedAt };
+        writeEdit(store, key, { responseId: response.id, editKey: saved.editKey, response });
+        return { ok: true, response, edited: true };
       }
       const response: RsvpResponse = {
-        id: body.responseId ?? `local-${body.slug}-${body.token ?? 'open'}`,
+        id: `local-${body.slug}-${body.channel}`,
         attending: body.attending,
         companions: body.companions,
         name,
-        updatedAt: new Date().toISOString(),
+        updatedAt,
       };
-      return { ok: true, response, edited: Boolean(body.responseId) };
+      const editKey = `edit-${body.slug}-${body.channel}`;
+      writeEdit(store, key, { responseId: response.id, editKey, response });
+      return { ok: true, response, edited: false, editKey };
     },
   };
 }
 
 export function createApiRsvpClient(baseUrl: string): RsvpClient {
   return {
-    remember() {},
-    async read() {
-      return null;
-    },
-    async submit(body) {
-      try {
-        const response = await fetch(`${baseUrl}/v1/invitations/${encodeURIComponent(body.slug)}/rsvp`, {
-          method: body.responseId ? 'PATCH' : 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-        if (response.status === 429) return { ok: false, code: 'rate_limited' };
-        if (response.status === 403) return { ok: false, code: 'revoked' };
-        if (response.status === 409) return { ok: false, code: 'closed' };
-        if (response.status === 400) return { ok: false, code: 'validation' };
-        if (!response.ok) return { ok: false, code: 'network' };
-        const payload = (await response.json()) as { response: RsvpResponse; edited?: boolean };
-        return { ok: true, response: payload.response, edited: Boolean(payload.edited ?? body.responseId) };
-      } catch {
+    context(input) {
+      return postJson<RsvpContextResult>(`${baseUrl}/functions/v1/rsvp-context`, input, (response, payload) => {
+        if (response.ok && isRecord(payload) && 'status' in payload) return { ok: true, context: payload as RsvpContext };
+        if (response.status === 404) return { ok: false, code: 'not_found' };
+        if (response.status === 503) return { ok: false, code: 'unavailable' };
         return { ok: false, code: 'network' };
-      }
+      });
+    },
+    submit(body) {
+      return postJson<RsvpSubmitResult>(`${baseUrl}/functions/v1/rsvp`, body, (response, payload) => {
+        if (response.ok && isRecord(payload) && 'response' in payload) {
+          const bodyPayload = payload as { response: RsvpResponse; edited?: boolean; editKey?: string };
+          return {
+            ok: true,
+            response: bodyPayload.response,
+            edited: Boolean(bodyPayload.edited),
+            editKey: bodyPayload.editKey,
+          };
+        }
+        return readSubmitError(response, payload);
+      });
     },
   };
+}
+
+async function postJson<T>(url: string, body: unknown, map: (response: Response, payload: unknown) => T): Promise<T> {
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const payload = await response.json().catch(() => null);
+    return map(response, payload);
+  } catch {
+    return { ok: false, code: 'network' } as T;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function readSubmitError(response: Response, payload: unknown): RsvpSubmitResult {
+  const error = (payload as { error?: { code?: string; field?: string; reason?: string } } | null)?.error;
+  const code = error?.code;
+  const retryAfter = Number(response.headers.get('Retry-After'));
+  if (response.status === 400 && code === 'validation') {
+    return { ok: false, code: 'validation', field: error?.field, reason: error?.reason };
+  }
+  if (response.status === 400) return { ok: false, code: 'validation' };
+  if (response.status === 403 && code === 'turnstile_failed') return { ok: false, code: 'turnstile_failed' };
+  if (response.status === 403 && code === 'edit_forbidden') return { ok: false, code: 'edit_forbidden' };
+  if (response.status === 404) return { ok: false, code: 'not_found' };
+  if (response.status === 409) return { ok: false, code: 'closed' };
+  if (response.status === 410) return { ok: false, code: 'revoked' };
+  if (response.status === 429) {
+    return { ok: false, code: 'rate_limited', retryAfter: Number.isFinite(retryAfter) ? retryAfter : undefined };
+  }
+  if (response.status === 503) return { ok: false, code: 'unavailable' };
+  return { ok: false, code: 'network' };
 }

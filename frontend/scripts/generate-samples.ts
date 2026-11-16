@@ -86,9 +86,9 @@ async function main() {
       height: 2000,
       focal,
       src: {
-        w800: `/samples/${id}-800.webp`,
-        w1200: `/samples/${id}-1200.webp`,
-        w1600: `/samples/${id}-1600.webp`,
+        w800: `samples/${id}-800.webp`,
+        w1200: `samples/${id}-1200.webp`,
+        w1600: `samples/${id}-1600.webp`,
       },
       lqip: `data:image/webp;base64,${lqipBuffer.toString('base64')}`,
     });

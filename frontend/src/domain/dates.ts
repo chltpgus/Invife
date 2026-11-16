@@ -17,10 +17,10 @@ export function pad2(value: number): string {
   return String(value).padStart(2, '0');
 }
 
-/** 예식 전날 23:59 KST. 초대장 JSON 에 넣기 전의 기본값. */
+/** 예식 전날 23:59:59.999 KST. 그 시각까지 포함하고, 다음 밀리초부터 닫는다. */
 export function defaultRsvpDeadline(ceremonyDate: string): Date {
   const [year, month, day] = parts(ceremonyDate);
-  return new Date(Date.UTC(year, month - 1, day - 1, 23 - 9, 59, 0, 0));
+  return new Date(Date.UTC(year, month - 1, day - 1, 23 - 9, 59, 59, 999));
 }
 
 /** 예식 다음 날 00:00 KST. */
@@ -37,7 +37,7 @@ export function isEventEnded(now: Date, ceremonyDate: string, override: string |
   return now.getTime() >= resolveEndedAt(ceremonyDate, override).getTime();
 }
 
-/** 마감 시각은 포함한다. 그 다음부터 닫힌다. */
+/** 마감 시각(23:59:59.999 KST)은 포함한다. 그 다음 밀리초부터 닫힌다. */
 export function isDeadlineClosed(now: Date, deadline: string): boolean {
   return now.getTime() > new Date(deadline).getTime();
 }

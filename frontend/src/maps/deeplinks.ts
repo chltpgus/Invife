@@ -44,16 +44,6 @@ export function tmapStoreUrl(userAgent: string): string {
   return 'https://play.google.com/store/apps/details?id=com.skt.tmap.ku';
 }
 
-export function kakaoStaticMapUrl(input: { lat: number; lng: number; width: number; height: number }): string {
-  const params = new URLSearchParams({
-    center: `${input.lng},${input.lat}`,
-    level: '3',
-    size: `${input.width}x${input.height}`,
-    marker: `position:${input.lng},${input.lat}`,
-  });
-  return `https://dapi.kakao.com/v2/maps/staticmap?${params.toString()}`;
-}
-
 /** 앱 스킴이 1.5초 안에 화면을 가리지 않으면 웹 또는 스토어로 넘긴다. */
 export function openMapApp(target: AppLink): void {
   const timer = window.setTimeout(() => {

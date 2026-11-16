@@ -1,16 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { siteConfig } from '@/config';
 import {
   canSubmitRsvp,
   companionsToSend,
   initialPhase,
+  needsTurnstile,
+  normalizeGuestName,
   phaseAfterResult,
-  requiresGuestName,
-  responseSummary,
   submitLabel,
   validateGuestName,
+  validationCopy,
 } from '@/domain/rsvp';
-import type { GuestView, RsvpResponse } from '@/domain/types';
+import type { RsvpResponse } from '@/domain/types';
 
 const response: RsvpResponse = {
   id: 'r1',
@@ -21,27 +21,19 @@ const response: RsvpResponse = {
 };
 
 describe('RSVP 상태', () => {
-  it('기본 이름 모드는 받는 사람 링크의 미리 채우기다', () => {
-    expect(siteConfig.rsvpNameMode).toBe('prefill-input');
+  it('이름은 공백을 빼고 NFC 로 맞춘 뒤 1자에서 20코드 포인트', () => {
+    expect(normalizeGuestName('  서연  ')).toBe('서연');
+    expect(normalizeGuestName('가\u0300')).toBe('가\u0300'.normalize('NFC'));
+    expect(validateGuestName('  ')).toBe('이름을 입력해 주세요');
+    expect(validateGuestName('  서연  ')).toBeNull();
+    expect(validateGuestName('가'.repeat(21))).toBe('이름은 20자까지 입력할 수 있어요');
   });
 
-  it('링크 종류에 따라 이름 입력이 갈린다', () => {
-    const personal: GuestView = { kind: 'personal', token: 't', name: '김지훈', response: null };
-    const shared: GuestView = { kind: 'shared-rsvp', token: 's' };
-    const notice: GuestView = { kind: 'shared-invitation', rsvp: 'notice' };
-    expect(requiresGuestName(personal, 'prefill-input')).toBe(true);
-    expect(requiresGuestName(personal, 'hidden')).toBe(false);
-    expect(requiresGuestName(personal, 'show-name')).toBe(false);
-    expect(requiresGuestName(shared, 'hidden')).toBe(true);
-    expect(requiresGuestName(notice, 'prefill-input')).toBe(false);
-    expect(requiresGuestName({ kind: 'revoked-personal', token: 't' }, 'prefill-input')).toBe(true);
-  });
-
-  it('이름은 앞뒤 공백을 빼고 1자에서 20자', () => {
-    expect(validateGuestName('  ', true)).toBe('이름을 입력해 주세요');
-    expect(validateGuestName('  서연  ', true)).toBeNull();
-    expect(validateGuestName('가'.repeat(21), true)).toBe('이름은 20자까지 입력할 수 있어요');
-    expect(validateGuestName('', false)).toBeNull();
+  it('400 은 필드에 따라 갈린다', () => {
+    expect(validationCopy('name', 'required').nameError).toBe('이름을 입력해 주세요');
+    expect(validationCopy('name', 'too_long').nameError).toBe('이름은 20자까지 입력할 수 있어요');
+    expect(validationCopy('companions', 'not_zero')).toEqual({ nameError: null, banner: 'validation' });
+    expect(validationCopy(undefined, undefined).nameError).toBeNull();
   });
 
   it('참석을 고르기 전에는 보낼 수 없고, 불참이면 동행은 0이다', () => {
@@ -51,21 +43,24 @@ describe('RSVP 상태', () => {
     expect(companionsToSend(true, 11)).toBe(10);
   });
 
-  it('재방문·마감·수정 성공·429', () => {
+  it('Turnstile 은 개인 링크가 아니거나 폐기된 링크에만', () => {
+    expect(needsTurnstile({ channel: 'personal', token: 't' }, false)).toBe(false);
+    expect(needsTurnstile({ channel: 'personal', token: 't' }, true)).toBe(true);
+    expect(needsTurnstile({ channel: 'invite' }, false)).toBe(true);
+    expect(needsTurnstile({ channel: 'rsvp_link', token: 's' }, false)).toBe(true);
+  });
+
+  it('재방문·마감·수정 성공·429·폐기', () => {
     expect(initialPhase(false, null).name).toBe('form');
     expect(initialPhase(false, response).name).toBe('success');
     expect(initialPhase(true, response).name).toBe('closed');
     expect(phaseAfterResult({ ok: true, response, edited: true }, true)).toEqual({ name: 'success', edited: true });
-    expect(phaseAfterResult({ ok: false, code: 'rate_limited' }, false)?.name).toBe('form');
-    const limited = phaseAfterResult({ ok: false, code: 'rate_limited' }, true);
-    expect(limited?.name === 'form' && limited.banner).toBe('rate_limited');
+    const limited = phaseAfterResult({ ok: false, code: 'rate_limited', retryAfter: 30 }, true);
+    expect(limited?.name === 'form' && limited.banner === 'rate_limited' && limited.retryAfter).toBe(30);
+    expect(phaseAfterResult({ ok: false, code: 'revoked' }, false)).toMatchObject({ name: 'form', intent: 'create' });
+    expect(phaseAfterResult({ ok: false, code: 'not_found' }, false)).toBeNull();
     expect(submitLabel({ name: 'form', intent: 'edit', banner: 'none', submitting: false, nameError: null })).toBe(
       '수정 내용 전달하기',
     );
-  });
-
-  it('요약 문구', () => {
-    expect(responseSummary(response, true)).toBe('박하늘 님 · 참석 · 동행 2명');
-    expect(responseSummary({ ...response, attending: false, companions: 0 }, false)).toBe('불참');
   });
 });

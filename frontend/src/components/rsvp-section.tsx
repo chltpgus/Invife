@@ -1,113 +1,170 @@
 'use client';
 
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
-import { siteConfig } from '@/config';
-import { sharedInvitationRsvpNote, eyebrows } from '@/content/copy';
+import { eyebrows } from '@/content/copy';
 import { Icon } from '@/components/icon';
 import { deadlineCaption, isDeadlineClosed } from '@/domain/dates';
 import {
   canSubmitRsvp,
   companionsToSend,
   COMPANION_MAX,
+  editStorageKey,
   initialPhase,
-  linkToken,
+  needsTurnstile,
+  normalizeGuestName,
   phaseAfterResult,
-  requiresGuestName,
+  readStoredEdit,
   responseSummary,
-  storageKeyFor,
   submitLabel,
-  summaryShowsName,
   validateGuestName,
   type RsvpPhase,
 } from '@/domain/rsvp';
-import type { FixtureRsvpMode, GuestView, Invitation, RsvpResponse } from '@/domain/types';
+import type { GuestLink, Invitation, RsvpResponse } from '@/domain/types';
 import { env } from '@/env';
+import { browserStore } from '@/rsvp/client';
 import { createRsvpClient } from '@/rsvp/create-client';
 
 export function RsvpSection({
   invitation,
-  view,
-  mode,
-  now,
+  link,
   hasContact,
+  onMissing,
 }: {
   invitation: Invitation;
-  view: GuestView;
-  mode: FixtureRsvpMode;
-  now: string;
+  link: GuestLink;
   hasContact: boolean;
+  onMissing: () => void;
 }) {
-  if (view.kind === 'shared-invitation' && view.rsvp === 'notice') {
-    return (
-      <section className="section" id="rsvp" aria-labelledby="rsvp-title">
-        <p className="eyebrow" aria-hidden="true">
-          {eyebrows.rsvp}
-        </p>
-        <h2 id="rsvp-title" className="heading">
-          참석 여부
-        </h2>
-        <p className="text-2">{sharedInvitationRsvpNote}</p>
-      </section>
-    );
-  }
-  return <RsvpForm invitation={invitation} view={view} mode={mode} now={now} hasContact={hasContact} />;
+  const client = useRef(createRsvpClient()).current;
+  const store = useRef(browserStore()).current;
+  const [ready, setReady] = useState(false);
+  const [unavailable, setUnavailable] = useState(false);
+  const [deadline, setDeadline] = useState(invitation.rsvp.deadline);
+  const [closed, setClosed] = useState(false);
+  const [revoked, setRevoked] = useState(false);
+  const [prefillName, setPrefillName] = useState('');
+  const [response, setResponse] = useState<RsvpResponse | null>(null);
+  const [editKey, setEditKey] = useState<string | undefined>();
+  const token = link.channel === 'invite' ? undefined : link.token;
+
+  useEffect(() => {
+    let live = true;
+    void client.context({ slug: invitation.slug, token }).then((result) => {
+      if (!live) return;
+      if (!result.ok) {
+        if (result.code === 'not_found') onMissing();
+        else setUnavailable(true);
+        setReady(true);
+        return;
+      }
+      const context = result.context;
+      setDeadline(context.deadline);
+      setClosed(context.status === 'closed' || isDeadlineClosed(new Date(), context.deadline));
+      setRevoked(Boolean(context.revoked));
+      setPrefillName(context.revoked ? '' : (context.prefillName ?? ''));
+      if (context.revoked) {
+        setResponse(null);
+      } else if (context.link === 'personal') {
+        setResponse(context.response ?? null);
+      } else {
+        const stored = readStoredEdit(store.get(editStorageKey(invitation.slug, context.link, token)));
+        setResponse(stored?.response ?? null);
+        setEditKey(stored?.editKey);
+      }
+      setReady(true);
+    });
+    return () => {
+      live = false;
+    };
+  }, [client, invitation.slug, link.channel, token, onMissing, store]);
+
+  return (
+    <section className="section" id="rsvp" aria-labelledby="rsvp-title">
+      <p className="eyebrow" aria-hidden="true">
+        {eyebrows.rsvp}
+      </p>
+      <h2 id="rsvp-title" className="heading">
+        참석 여부
+      </h2>
+      {ready ? (
+        <RsvpForm
+          invitation={invitation}
+          link={link}
+          hasContact={hasContact}
+          deadline={deadline}
+          closed={closed}
+          revoked={revoked}
+          prefillName={prefillName}
+          initialResponse={response}
+          initialEditKey={editKey}
+          unavailable={unavailable}
+          onRevoked={() => {
+            setRevoked(true);
+            setPrefillName('');
+            setResponse(null);
+            setEditKey(undefined);
+          }}
+          onMissing={onMissing}
+        />
+      ) : (
+        <p className="caption">참석 여부를 확인하고 있어요</p>
+      )}
+    </section>
+  );
 }
 
 function RsvpForm({
   invitation,
-  view,
-  mode,
-  now,
+  link,
   hasContact,
+  deadline,
+  closed,
+  revoked,
+  prefillName,
+  initialResponse,
+  initialEditKey,
+  unavailable,
+  onRevoked,
+  onMissing,
 }: {
   invitation: Invitation;
-  view: GuestView;
-  mode: FixtureRsvpMode;
-  now: string;
+  link: GuestLink;
   hasContact: boolean;
+  deadline: string;
+  closed: boolean;
+  revoked: boolean;
+  prefillName: string;
+  initialResponse: RsvpResponse | null;
+  initialEditKey?: string;
+  unavailable: boolean;
+  onRevoked: () => void;
+  onMissing: () => void;
 }) {
-  const preset = view.kind === 'personal' ? view.name : '';
-  const seeded = view.kind === 'personal' ? view.response : null;
-  const closed = isDeadlineClosed(new Date(now), invitation.rsvp.deadline);
-  const client = useRef(createRsvpClient(mode)).current;
-  const storageKey = storageKeyFor(invitation.id, view);
-  const [response, setResponse] = useState<RsvpResponse | null>(seeded);
-  const [phase, setPhase] = useState<RsvpPhase>(() => initialPhase(closed, seeded));
-  const [attending, setAttending] = useState<boolean | null>(seeded ? seeded.attending : null);
-  const [companions, setCompanions] = useState(seeded?.companions ?? 0);
-  const [name, setName] = useState(seeded?.name || preset);
+  const client = useRef(createRsvpClient()).current;
+  const store = useRef(browserStore()).current;
+  const [response, setResponse] = useState(initialResponse);
+  const [editKey, setEditKey] = useState(initialEditKey);
+  const [phase, setPhase] = useState<RsvpPhase>(() =>
+    unavailable
+      ? { name: 'form', intent: 'create', banner: 'unavailable', submitting: false, nameError: null }
+      : initialPhase(closed, revoked ? null : initialResponse),
+  );
+  const [attending, setAttending] = useState<boolean | null>(initialResponse && !revoked ? initialResponse.attending : null);
+  const [companions, setCompanions] = useState(initialResponse && !revoked ? initialResponse.companions : 0);
+  const [name, setName] = useState(revoked ? '' : initialResponse?.name || prefillName);
   const [editingName, setEditingName] = useState(false);
   const [turnstileToken, setTurnstileToken] = useState('');
   const [turnstileError, setTurnstileError] = useState(false);
+  const [widgetKey, setWidgetKey] = useState(0);
   const nameRef = useRef<HTMLInputElement>(null);
   const bannerRef = useRef<HTMLParagraphElement>(null);
   const resultRef = useRef<HTMLHeadingElement>(null);
   const nameId = useId();
   const errorId = useId();
-  const required = requiresGuestName(view, siteConfig.rsvpNameMode);
-  const prefill = view.kind === 'personal' && siteConfig.rsvpNameMode === 'prefill-input';
-  const showName = view.kind === 'personal' && siteConfig.rsvpNameMode === 'show-name';
-  const needsTurnstile = view.kind === 'shared-rsvp' && Boolean(env.turnstileSiteKey);
-  const caption = deadlineCaption(invitation.rsvp.deadline);
-
-  useEffect(() => {
-    if (closed) setPhase({ name: 'closed' });
-  }, [closed]);
-
-  useEffect(() => {
-    let live = true;
-    void client.read(storageKey).then((stored) => {
-      if (!live || !stored) return;
-      setResponse(stored);
-      setName(stored.name || preset);
-      setAttending(stored.attending);
-      setCompanions(stored.companions);
-      setPhase(initialPhase(isDeadlineClosed(new Date(), invitation.rsvp.deadline), stored));
-    });
-    return () => {
-      live = false;
-    };
-  }, [client, invitation.rsvp.deadline, preset, storageKey]);
+  const personalPrefill = link.channel === 'personal' && !revoked && Boolean(prefillName);
+  const turnstile = needsTurnstile(link, revoked) && Boolean(env.turnstileSiteKey);
+  const caption = deadlineCaption(deadline);
+  const summary = response ? responseSummary(response, true) : '';
 
   useEffect(() => {
     if (phase.name === 'success') resultRef.current?.focus();
@@ -119,60 +176,82 @@ function RsvpForm({
     if (editingName) nameRef.current?.focus();
   }, [editingName]);
 
+  function remember(next: RsvpResponse, key: string | undefined) {
+    if (link.channel === 'personal' || !key) return;
+    store.set(
+      editStorageKey(invitation.slug, link.channel, link.channel === 'rsvp_link' ? link.token : undefined),
+      JSON.stringify({ responseId: next.id, editKey: key, response: next }),
+    );
+  }
+
   function beginEdit() {
     if (!response) return;
     setAttending(response.attending);
     setCompanions(response.companions);
-    setName(response.name || preset);
-    setEditingName(true);
+    setName(response.name);
+    setEditingName(link.channel !== 'personal');
     setPhase({ name: 'form', intent: 'edit', banner: 'none', submitting: false, nameError: null });
   }
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     if (phase.name !== 'form' || !canSubmitRsvp(attending, phase.submitting) || attending === null) return;
-    const nameError = validateGuestName(name, required);
+    const nameError = validateGuestName(name);
     if (nameError) {
       setEditingName(true);
       setPhase({ ...phase, nameError, banner: 'none' });
       return;
     }
-    if (needsTurnstile && !turnstileToken) {
+    if (turnstile && !turnstileToken) {
       setTurnstileError(true);
       return;
     }
     setPhase({ ...phase, submitting: true, nameError: null, banner: 'none' });
     const result = await client.submit({
       slug: invitation.slug,
-      linkType: view.kind,
-      token: linkToken(view),
-      name: required ? name.trim() : undefined,
+      channel: link.channel,
+      token: link.channel === 'invite' ? undefined : link.token,
+      name: normalizeGuestName(name),
       attending,
       companions: companionsToSend(attending, companions),
       responseId: phase.intent === 'edit' ? response?.id : undefined,
+      editKey: phase.intent === 'edit' && link.channel !== 'personal' ? editKey : undefined,
       turnstileToken: turnstileToken || undefined,
     });
     if (result.ok) {
-      client.remember(storageKey, result.response);
+      const key = result.editKey ?? editKey;
       setResponse(result.response);
+      if (key) setEditKey(key);
+      remember(result.response, key);
+    }
+    if (!result.ok && result.code === 'revoked') {
+      onRevoked();
+      setResponse(null);
+      setName('');
+      setEditingName(false);
+      setAttending(null);
+      setCompanions(0);
+      setTurnstileToken('');
+      setWidgetKey((value) => value + 1);
+    }
+    if (!result.ok && result.code === 'turnstile_failed') {
+      setTurnstileToken('');
+      setWidgetKey((value) => value + 1);
+      setTurnstileError(true);
+    }
+    if (!result.ok && result.code === 'not_found') {
+      onMissing();
+      return;
     }
     const next = phaseAfterResult(result, phase.intent === 'edit');
     if (next) setPhase(next);
   }
 
-  const summary = response ? responseSummary(response, summaryShowsName(view, siteConfig.rsvpNameMode)) : '';
-
   return (
-    <section className="section" id="rsvp" aria-labelledby="rsvp-title">
-      <p className="eyebrow" aria-hidden="true">
-        {eyebrows.rsvp}
-      </p>
-      <h2 id="rsvp-title" className="heading">
-        참석 여부
-      </h2>
+    <>
       {phase.name === 'closed' ? (
         <div className="result-card">
-          {response ? (
+          {response && !revoked ? (
             <>
               <h3 className="title-text" tabIndex={-1} ref={resultRef}>
                 {summary}
@@ -212,20 +291,18 @@ function RsvpForm({
           {phase.banner !== 'none' ? (
             <p className="banner" role="alert" tabIndex={-1} ref={bannerRef}>
               <Icon name="alert" size={18} />
-              {phase.banner === 'rate_limited' ? '잠시 후 다시 시도해 주세요' : '전달하지 못했어요. 입력한 내용은 그대로 있어요.'}
+              {bannerText(phase)}
             </p>
           ) : null}
           {phase.intent === 'edit' && response ? <p className="caption">이전 응답: {summary}</p> : null}
-          {showName ? <p className="body-strong">{preset}</p> : null}
-          {prefill && !editingName ? (
+          {personalPrefill && !editingName ? (
             <div className="name-preset">
-              <p className="body-strong">{preset} 님으로 응답해요</p>
+              <p className="body-strong">{prefillName} 님으로 응답해요</p>
               <button type="button" className="btn-text" onClick={() => setEditingName(true)}>
-                {preset} 님이 아니신가요?
+                {prefillName} 님이 아니신가요?
               </button>
             </div>
-          ) : null}
-          {required && (!prefill || editingName) ? (
+          ) : (
             <div className="field-block">
               <label className="label-text" htmlFor={nameId}>
                 이름
@@ -250,15 +327,10 @@ function RsvpForm({
                 </p>
               ) : null}
             </div>
-          ) : null}
+          )}
           <div className="choices" role="radiogroup" aria-label="참석 여부">
             <label className="choice">
-              <input
-                type="radio"
-                name={`${invitation.id}-attending`}
-                checked={attending === true}
-                onChange={() => setAttending(true)}
-              />
+              <input type="radio" name={`${invitation.id}-attending`} checked={attending === true} onChange={() => setAttending(true)} />
               <span>참석</span>
               {attending === true ? <Icon name="check" size={18} /> : null}
             </label>
@@ -303,7 +375,9 @@ function RsvpForm({
             </div>
           ) : null}
           <p className="caption">{caption}</p>
-          {needsTurnstile ? <Turnstile siteKey={env.turnstileSiteKey} onToken={setTurnstileToken} error={turnstileError} /> : null}
+          {turnstile ? (
+            <Turnstile key={widgetKey} siteKey={env.turnstileSiteKey} onToken={setTurnstileToken} error={turnstileError || phase.banner === 'turnstile'} />
+          ) : null}
           <button type="submit" className="btn btn-primary" disabled={!canSubmitRsvp(attending, phase.submitting)}>
             {phase.submitting ? (
               <span className="spin">
@@ -313,18 +387,25 @@ function RsvpForm({
             {submitLabel(phase)}
           </button>
           {phase.intent === 'edit' ? (
-            <button
-              type="button"
-              className="btn-text"
-              onClick={() => setPhase({ name: 'success', edited: false })}
-            >
+            <button type="button" className="btn-text" onClick={() => setPhase({ name: 'success', edited: false })}>
               취소
             </button>
           ) : null}
         </form>
       ) : null}
-    </section>
+    </>
   );
+}
+
+function bannerText(phase: Extract<RsvpPhase, { name: 'form' }>): string {
+  if (phase.banner === 'rate_limited') {
+    return phase.retryAfter ? `잠시 후 다시 시도해 주세요. ${phase.retryAfter}초 뒤예요.` : '잠시 후 다시 시도해 주세요';
+  }
+  if (phase.banner === 'unavailable') return '지금은 응답을 받을 수 없어요. 잠시 후 다시 시도해 주세요.';
+  if (phase.banner === 'edit_forbidden') return '이 기기에서는 응답을 수정할 수 없어요.';
+  if (phase.banner === 'turnstile') return '확인을 다시 해 주세요.';
+  if (phase.banner === 'validation') return '입력한 내용을 확인해 주세요.';
+  return '전달하지 못했어요. 입력한 내용은 그대로 있어요.';
 }
 
 function Turnstile({ siteKey, onToken, error }: { siteKey: string; onToken: (token: string) => void; error: boolean }) {

@@ -3,7 +3,7 @@ import path from 'node:path';
 import { Resvg } from '@resvg/resvg-js';
 import satori from 'satori';
 import sharp from 'sharp';
-import { fixtures } from '@/data/fixtures';
+import { invitations } from '@/data/fixtures';
 import { formatMonthDay, ogDescription } from '@/domain/dates';
 import type { Invitation, ThemeId } from '@/domain/types';
 
@@ -46,8 +46,7 @@ async function main() {
   const outDir = path.join(process.cwd(), 'public/og');
   await mkdir(outDir, { recursive: true });
 
-  for (const record of fixtures) {
-    const invitation = record.invitation;
+  for (const invitation of invitations) {
     const color = themeColor[invitation.theme];
     const image = await coverDataUri(invitation);
     const svg = await satori(
