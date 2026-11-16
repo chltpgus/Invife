@@ -7,16 +7,27 @@
 | 문서 | 설명 |
 |---|---|
 | [MVP 최종 기획안](./planning/mvp-plan.md) | 6주 출시를 목표로 한 MVP 범위, 디자인 방향, 기술 구조, 일정 |
+| [하객 페이지 디자인 스펙](./design/design-spec.md) | 하객 초대장 UI/UX 스펙 (구현 기준) |
+| [디자인 토큰](./design/tokens.json) | 색·타이포·간격 등 디자인 토큰 (구현 기준) |
+
+Figma는 시각 확인용이에요. 개발 시 기준 문서는 위 스펙과 `tokens.json`입니다.
 
 ## 폴더 구조
 
 ```
 docs/
-├── readme.md          # 이 파일
-└── planning/
-    └── mvp-plan.md    # MVP 최종 기획안
+├── readme.md              # 이 파일
+├── planning/
+│   └── mvp-plan.md        # MVP 최종 기획안
+└── design/
+    ├── design-spec.md     # 하객 페이지 디자인 스펙
+    ├── tokens.json        # 디자인 토큰
+    └── assets/
+        ├── icons/         # 아이콘 SVG (19개)
+        └── envelope/      # 봉투 연출 SVG (6개)
 ```
 
 ## 빠른 링크
 
 - **[MVP 최종 기획안](./planning/mvp-plan.md)** — 서비스 방향과 출시 범위의 확정본
+- **[하객 페이지 디자인 스펙](./design/design-spec.md)** · **[tokens.json](./design/tokens.json)**

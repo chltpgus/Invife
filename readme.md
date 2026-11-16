@@ -62,9 +62,12 @@
 
 - [docs 폴더 안내](./docs/readme.md)
 - [MVP 최종 기획안](./docs/planning/mvp-plan.md)
+- [하객 페이지 디자인 스펙](./docs/design/design-spec.md)
+- [디자인 토큰 (`tokens.json`)](./docs/design/tokens.json)
 
 ## 디자인
 
-UI·비주얼 작업은 Figma에서 진행해요.
+구현 기준은 [하객 페이지 디자인 스펙](./docs/design/design-spec.md)과 [디자인 토큰](./docs/design/tokens.json)이에요. Figma는 시각 확인용으로 써요.
 
-**[Invife — Figma 디자인 파일](https://www.figma.com/design/dZ6Mj2uzaorKHvwkuqXSoE/invife)**
+- **[하객 페이지 디자인 스펙](./docs/design/design-spec.md)** · **[tokens.json](./docs/design/tokens.json)**
+- **[Invife — Figma 디자인 파일](https://www.figma.com/design/dZ6Mj2uzaorKHvwkuqXSoE/invife)** (시각 확인용)
