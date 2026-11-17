@@ -6,6 +6,7 @@ import { venueLine } from '@/domain/visibility';
 
 export function When({ invitation }: { invitation: Invitation }) {
   const { ceremony } = invitation;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ceremony.date)) return null;
   const grid = monthGrid(ceremony.date);
   const day = Number(ceremony.date.slice(8, 10));
   const line = formatWhenLine(ceremony.date, ceremony.time, venueLine(invitation));

@@ -27,6 +27,10 @@ const config: NextConfig = {
           /[\\/]rsvp[\\/]create-client\.ts$/,
           path.join(root, 'src/rsvp/create-client.api.ts'),
         ),
+        new wp.NormalModuleReplacementPlugin(
+          /[\\/]editor[\\/]create-client\.ts$/,
+          path.join(root, 'src/editor/create-client.api.ts'),
+        ),
       );
     }
     return webpackConfig;

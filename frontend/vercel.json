@@ -3,7 +3,9 @@
     { "source": "/i/:slug/g/:token", "destination": "/i/:slug/index.html" },
     { "source": "/i/:slug/g/:token/", "destination": "/i/:slug/index.html" },
     { "source": "/i/:slug/s/:token", "destination": "/i/:slug/index.html" },
-    { "source": "/i/:slug/s/:token/", "destination": "/i/:slug/index.html" }
+    { "source": "/i/:slug/s/:token/", "destination": "/i/:slug/index.html" },
+    { "source": "/edit/:id", "destination": "/edit/local/index.html" },
+    { "source": "/edit/:id/", "destination": "/edit/local/index.html" }
   ],
   "headers": [
     {

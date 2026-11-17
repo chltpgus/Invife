@@ -217,7 +217,8 @@ function RsvpForm({
       setPhase({ ...phase, nameError, banner: 'none' });
       return;
     }
-    if (turnstile && !turnstileToken) {
+    const editing = phase.intent === 'edit' && Boolean(response?.id && editKey);
+    if (turnstile && !editing && !turnstileToken) {
       setTurnstileError(true);
       return;
     }
@@ -231,7 +232,7 @@ function RsvpForm({
       companions: companionsToSend(attending, companions),
       responseId: phase.intent === 'edit' ? response?.id : undefined,
       editKey: phase.intent === 'edit' && link.channel !== 'personal' ? editKey : undefined,
-      turnstileToken: turnstileToken || undefined,
+      turnstileToken: editing ? undefined : turnstileToken || undefined,
     });
     if (result.ok) {
       const key = result.editKey ?? editKey;

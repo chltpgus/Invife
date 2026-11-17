@@ -84,8 +84,9 @@ function ContactGroup({ label, rows }: { label: string; rows: ContactRow[] }) {
   );
 }
 
-export function Story({ invitation }: { invitation: Invitation }) {
+export function Story({ invitation, preview = false }: { invitation: Invitation; preview?: boolean }) {
   const greeting = invitation.greeting?.trim();
+  const sign = [invitation.groom.givenName.trim(), invitation.bride.givenName.trim()].filter(Boolean).join(' · ');
   const groomLine = namedParents(invitation.families.groom).length > 0;
   const brideLine = namedParents(invitation.families.bride).length > 0;
   const contacts = contactsBySide(invitation);
@@ -103,7 +104,7 @@ export function Story({ invitation }: { invitation: Invitation }) {
             <p className="greeting-body">{greeting}</p>
             <hr className="hairline" />
             <p className="caption">
-              {invitation.groom.givenName} · {invitation.bride.givenName} 드림
+              {sign ? `${sign} 드림` : preview ? <span className="sample-text">서명</span> : null}
             </p>
           </Reveal>
         </section>
