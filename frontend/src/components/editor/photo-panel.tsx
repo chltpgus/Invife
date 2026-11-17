@@ -48,10 +48,11 @@ export function PhotoPanel({
     const jobs = accepted.map((file) => ({ id: crypto.randomUUID(), name: file.name, file, status: 'wait' as const }));
     setPending((current) => [...current, ...jobs.map(({ id, name, status }) => ({ id, name, status }))]);
     let cursor = 0;
-    const made: Photo[] = [];
+    const made: Array<Photo | undefined> = [];
     async function worker() {
       while (cursor < jobs.length) {
-        const job = jobs[cursor];
+        const index = cursor;
+        const job = jobs[index];
         cursor += 1;
         if (!job || cancelled.current.has(job.id)) continue;
         setPending((current) => current.map((item) => (item.id === job.id ? { ...item, status: 'work' } : item)));
@@ -62,12 +63,13 @@ export function PhotoPanel({
           onMessage(result.error);
           continue;
         }
-        made.push(result.photo);
+        made[index] = result.photo;
         setPending((current) => current.filter((item) => item.id !== job.id));
       }
     }
     await Promise.all(Array.from({ length: Math.min(3, jobs.length) }, () => worker()));
-    if (made.length > 0) onPhotos([...photos, ...made].slice(0, PHOTO_LIMIT));
+    const ordered = made.filter((photo): photo is Photo => Boolean(photo));
+    if (ordered.length > 0) onPhotos([...photos, ...ordered].slice(0, PHOTO_LIMIT));
   }
 
   async function remove(id: string) {

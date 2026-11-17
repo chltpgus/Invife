@@ -1,21 +1,34 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { QueryClient, QueryClientProvider, useMutation } from '@tanstack/react-query';
 import { kstToday } from '@/domain/editor';
 import { createEditorClient } from '@/editor/create-client';
 import { isTheme } from '@/editor/themes';
+import type { CreateInvitationBody } from '@/editor/contract';
 import type { ThemeId } from '@/domain/types';
 import { ThemePicker } from '@/components/editor/theme-picker';
 
 export function NewScreen() {
+  const [queries] = useState(() => new QueryClient({ defaultOptions: { mutations: { retry: false } } }));
+  return (
+    <QueryClientProvider client={queries}>
+      <NewForm />
+    </QueryClientProvider>
+  );
+}
+
+function NewForm() {
   const [theme, setTheme] = useState<ThemeId>('ivory');
   const [groomName, setGroomName] = useState('');
   const [brideName, setBrideName] = useState('');
   const [ceremonyDate, setCeremonyDate] = useState('');
   const [ceremonyTime, setCeremonyTime] = useState('');
   const [error, setError] = useState('');
-  const [pending, setPending] = useState(false);
   const today = kstToday(new Date());
+  const createInvitation = useMutation({
+    mutationFn: (body: CreateInvitationBody) => createEditorClient().createInvitation(body),
+  });
 
   useEffect(() => {
     document.title = '색을 골라 주세요 · Invife';
@@ -24,10 +37,9 @@ export function NewScreen() {
   }, []);
 
   async function start(skip = false) {
-    setPending(true);
     setError('');
     try {
-      const invitation = await createEditorClient().createInvitation({
+      const invitation = await createInvitation.mutateAsync({
         theme,
         groomName: skip || !groomName.trim() ? undefined : groomName.trim(),
         brideName: skip || !brideName.trim() ? undefined : brideName.trim(),
@@ -37,7 +49,6 @@ export function NewScreen() {
       window.location.assign(`/edit/${invitation.id}/`);
     } catch {
       setError('잠시 후 다시 시도해 주세요');
-      setPending(false);
     }
   }
 
@@ -69,10 +80,10 @@ export function NewScreen() {
           </div>
           <p className="ed-caption">비워 두어도 시작할 수 있어요. 미리보기에는 안내 문구가 들어가요.</p>
           {error ? <p className="ed-error" role="alert">{error}</p> : null}
-          <button type="button" className="ed-btn ed-wide" disabled={pending} onClick={() => void start(false)}>
-            {pending ? '만들고 있어요…' : '만들기 시작'}
+          <button type="button" className="ed-btn ed-wide" disabled={createInvitation.isPending} onClick={() => void start(false)}>
+            {createInvitation.isPending ? '만들고 있어요…' : '만들기 시작'}
           </button>
-          <button type="button" className="ed-btn-text" disabled={pending} onClick={() => void start(true)}>
+          <button type="button" className="ed-btn-text" disabled={createInvitation.isPending} onClick={() => void start(true)}>
             건너뛰고 시작
           </button>
         </div>

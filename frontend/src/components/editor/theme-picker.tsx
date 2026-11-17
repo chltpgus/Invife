@@ -9,7 +9,7 @@ export function ThemePicker({ value, onChange }: { value: ThemeId; onChange: (th
   return (
     <div className="ed-theme-list" role="radiogroup" aria-label="색 테마">
       {themeChoices.map((theme) => (
-        <button key={theme.id} type="button" role="radio" aria-checked={value === theme.id} className={`ed-theme ${value === theme.id ? 'is-on' : ''}`} onClick={() => onChange(theme.id)}>
+        <button key={theme.id} type="button" role="radio" aria-checked={value === theme.id} aria-label={theme.label} className={`ed-theme ${value === theme.id ? 'is-on' : ''}`} onClick={() => onChange(theme.id)}>
           <span className="ed-mini" aria-hidden="true">
             <span className="ed-mini-scale">
               <Cover invitation={themeSample(theme.id)} />

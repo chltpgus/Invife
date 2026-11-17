@@ -1,24 +1,34 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import { createEditorClient } from '@/editor/create-client';
-import type { EditorInvitationSummary } from '@/editor/contract';
 import { themeSample } from '@/editor/themes';
 import { Cover } from '@/components/cover';
 import { Sheet } from '@/components/editor/ui';
 
 export function StartScreen({ samples }: { samples: Array<{ slug: string; label: string }> }) {
-  const [drafts, setDrafts] = useState<EditorInvitationSummary[]>([]);
+  const [queries] = useState(
+    () => new QueryClient({ defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } } }),
+  );
+  return (
+    <QueryClientProvider client={queries}>
+      <StartBody samples={samples} />
+    </QueryClientProvider>
+  );
+}
+
+function StartBody({ samples }: { samples: Array<{ slug: string; label: string }> }) {
   const [soon, setSoon] = useState(false);
+  const drafts = useQuery({
+    queryKey: ['editor-invitations'],
+    queryFn: () => createEditorClient().listInvitations().catch(() => []),
+  });
   useEffect(() => {
     document.title = 'Invife';
-    void createEditorClient()
-      .listInvitations()
-      .then(setDrafts)
-      .catch(() => setDrafts([]));
   }, []);
-  const latest = drafts[0];
+  const latest = drafts.data?.[0];
   return (
     <main className="app-root">
       <div className="ed-page">

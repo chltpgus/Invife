@@ -621,6 +621,8 @@
   background: var(--app-bg);
 }
 .ed-full-bar {
+  position: relative;
+  z-index: 40;
   display: flex;
   height: 48px;
   align-items: center;

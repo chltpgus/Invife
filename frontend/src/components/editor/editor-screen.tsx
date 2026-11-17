@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { QueryClient, QueryClientProvider, useMutation, useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import { Icon } from '@/components/icon';
 import { GuestPreview } from '@/components/editor/preview';
@@ -31,7 +32,7 @@ import {
 } from '@/domain/editor';
 import { formatCoverWhen } from '@/domain/dates';
 import { createEditorClient } from '@/editor/create-client';
-import type { EditorClient } from '@/editor/client';
+import type { AutosaveBody } from '@/editor/contract';
 import { draftFromInvitation, guestPhoto } from '@/editor/document';
 import { prepareUpload } from '@/editor/process-photo';
 import { waitForPhoto } from '@/editor/watch-photo';
@@ -56,8 +57,27 @@ const markName: Record<SectionMark, string> = {
 };
 
 export function EditorScreen({ routeId }: { routeId: string }) {
-  const id = useDraftId(routeId);
-  const [client, setClient] = useState<EditorClient | null>(null);
+  const [queries] = useState(
+    () => new QueryClient({ defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false }, mutations: { retry: false } } }),
+  );
+  return (
+    <QueryClientProvider client={queries}>
+      <EditorWorkspace routeId={routeId} />
+    </QueryClientProvider>
+  );
+}
+
+function EditorWorkspace({ routeId }: { routeId: string }) {
+  const { id, ready } = useDraftId(routeId);
+  const client = useMemo(() => createEditorClient(), []);
+  const invitationQuery = useQuery({
+    queryKey: ['editor-invitation', id],
+    queryFn: () => client.getInvitation(id),
+    enabled: ready,
+  });
+  const saveMutation = useMutation({
+    mutationFn: (input: { id: string; body: AutosaveBody; ifMatch: string }) => client.autosave(input.id, input.body, input.ifMatch),
+  });
   const [draft, setDraft] = useState<EditorDraft | null>(null);
   const [missing, setMissing] = useState(false);
   const [open, setOpen] = useState<SectionId>('cover');
@@ -73,13 +93,14 @@ export function EditorScreen({ routeId }: { routeId: string }) {
   const [banner, setBanner] = useState(true);
   const [note, setNote] = useState<string | null>(null);
   const [now, setNow] = useState(() => new Date());
-  const autosave = useAutosave(client, setDraft);
+  const autosave = useAutosave((invitationId, body, ifMatch) => saveMutation.mutateAsync({ id: invitationId, body, ifMatch }), setDraft);
   const bindRef = useRef(autosave.bind);
   bindRef.current = autosave.bind;
   const previewDraft = useDebounced(draft, PREVIEW_DEBOUNCE_MS);
 
+  const seeded = useRef<string | null>(null);
+
   useEffect(() => {
-    setClient(createEditorClient());
     try {
       if (localStorage.getItem('invife:editor:banner') === 'off') setBanner(false);
     } catch {
@@ -88,21 +109,19 @@ export function EditorScreen({ routeId }: { routeId: string }) {
   }, []);
 
   useEffect(() => {
-    if (!client) return;
-    let gone = false;
-    void client.getInvitation(id).then((loaded) => {
-      if (gone) return;
-      if (!loaded) setMissing(true);
-      else {
-        const next = draftFromInvitation(loaded);
-        setDraft(next);
-        bindRef.current(next, loaded);
-      }
-    }).catch(() => setMissing(true));
-    return () => {
-      gone = true;
-    };
-  }, [client, id]);
+    if (invitationQuery.isFetching) return;
+    if (invitationQuery.isError || invitationQuery.data === null) {
+      setMissing(true);
+      return;
+    }
+    const loaded = invitationQuery.data;
+    if (!loaded || seeded.current === loaded.id) return;
+    seeded.current = loaded.id;
+    const next = draftFromInvitation(loaded);
+    setMissing(false);
+    setDraft(next);
+    bindRef.current(next, loaded);
+  }, [invitationQuery.data, invitationQuery.isError, invitationQuery.isFetching]);
 
   useEffect(() => {
     const query = window.matchMedia('(min-width: 1440px)');
@@ -292,7 +311,7 @@ export function EditorScreen({ routeId }: { routeId: string }) {
       </button>
       {note ? <p className="ed-banner" role="status" style={{ position: 'fixed', left: 16, right: 16, bottom: 80, zIndex: 60 }}>{note}</p> : null}
       {full ? (
-        <div className="ed-full">
+        <div className="ed-full" role="dialog" aria-modal="true" aria-label="미리보기">
           <div className="ed-full-bar">
             <strong>미리보기</strong>
             <button type="button" className="ed-btn-text" onClick={() => setFullEnvelope(true)}>봉투 다시 보기</button>
@@ -491,13 +510,15 @@ function hiddenSections(draft: EditorDraft): string {
   return `비어 있어 숨겨지는 섹션: ${hidden.join(', ')}`;
 }
 
-function useDraftId(routeId: string): string {
+function useDraftId(routeId: string): { id: string; ready: boolean } {
   const [id, setId] = useState(routeId);
+  const [ready, setReady] = useState(false);
   useEffect(() => {
     const match = window.location.pathname.match(/\/edit\/([^/]+)/);
     if (match?.[1]) setId(decodeURIComponent(match[1]));
+    setReady(true);
   }, [routeId]);
-  return id;
+  return { id, ready };
 }
 
 function useDebounced<T>(value: T, delay: number): T {

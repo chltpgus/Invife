@@ -31,6 +31,11 @@ describe('초안 마감', () => {
     expect(next.deadlineCustom).toBe(false);
     expect(next.invitation.rsvp.deadline).toBe(defaultRsvpDeadline('2027-05-15').toISOString());
     expect(joinKst('2027-05-14', '23:59')).toBe(defaultRsvpDeadline('2027-05-15').toISOString());
+    expect(joinKst('', '23:59')).toBeNull();
+    expect(joinKst('2027-05-14', '')).toBeNull();
+    const kept = setDeadline(next, '', '');
+    expect(kept.invitation.rsvp.deadline).toBe(next.invitation.rsvp.deadline);
+    expect(kept.deadlineCustom).toBe(false);
   });
 
   it('직접 고른 마감은 날짜를 바꿔도 유지하고, 프리셋은 다시 기본값이다', () => {
@@ -97,6 +102,7 @@ describe('발행 검증', () => {
     expect(fieldIssues(early, now).some((issue) => issue.id === 'deadline')).toBe(true);
     const after = setDeadline(ready, '2027-05-15', '13:00');
     expect(fieldIssues(after, now).some((issue) => issue.message === '마감은 지금보다 뒤, 예식 시간보다 앞이어야 해요')).toBe(true);
+    expect(publishIssues(fieldIssues(after, now)).some((issue) => issue.id === 'deadline')).toBe(true);
     expect(fieldIssues(ready, now).some((issue) => issue.id === 'deadline')).toBe(false);
   });
 });

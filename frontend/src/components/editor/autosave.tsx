@@ -10,12 +10,10 @@ import {
   type AutosaveClock,
   type EditorDraft,
 } from '@/domain/editor';
-import type { EditorClient } from '@/editor/client';
-import type { EditorInvitation } from '@/editor/contract';
+import type { AutosaveBody, AutosaveResult, EditorInvitation, EditorPhoto } from '@/editor/contract';
 import { draftFromInvitation } from '@/editor/document';
 import { withPhoto } from '@/editor/etag';
 import { planAutosave } from '@/editor/patch';
-import type { EditorPhoto } from '@/editor/contract';
 
 export type SaveStatus = { kind: 'saved'; at: string } | { kind: 'saving' } | { kind: 'offline' } | { kind: 'error'; failures: number };
 
@@ -27,7 +25,7 @@ export function savedLabel(at: string, now: Date): string {
   return `${Math.floor(minutes / 60)}시간 전 저장`;
 }
 
-export function useAutosave(client: EditorClient | null, onReplace: (draft: EditorDraft) => void) {
+export function useAutosave(save: (id: string, body: AutosaveBody, ifMatch: string) => Promise<AutosaveResult>, onReplace: (draft: EditorDraft) => void) {
   const [status, setStatus] = useState<SaveStatus>({ kind: 'saved', at: '' });
   const [conflict, setConflict] = useState<EditorDraft | null>(null);
   const [holdSaved, setHoldSaved] = useState(false);
@@ -39,9 +37,9 @@ export function useAutosave(client: EditorClient | null, onReplace: (draft: Edit
   const failures = useRef(0);
   const saving = useRef(false);
   const queued = useRef(false);
-  const clientRef = useRef(client);
+  const saveRef = useRef(save);
   const flushRef = useRef<() => Promise<void>>(async () => undefined);
-  clientRef.current = client;
+  saveRef.current = save;
 
   function bind(draft: EditorDraft, invitation: EditorInvitation) {
     draftRef.current = draft;
@@ -77,9 +75,9 @@ export function useAutosave(client: EditorClient | null, onReplace: (draft: Edit
     if (timer.current) window.clearTimeout(timer.current);
     timer.current = null;
     const current = draftRef.current;
-    const api = clientRef.current;
+    const api = saveRef.current;
     const server = saved.current;
-    if (!current || !api || !server || clock.current.firstDirtyAt === null) return;
+    if (!current || !server || clock.current.firstDirtyAt === null) return;
     if (saving.current) {
       queued.current = true;
       return;
@@ -96,7 +94,7 @@ export function useAutosave(client: EditorClient | null, onReplace: (draft: Edit
     clock.current = clearDirtyClock();
     let result;
     try {
-      result = await api.autosave(current.invitation.id, body, baseAt);
+      result = await api(current.invitation.id, body, baseAt);
     } catch {
       result = { ok: false as const, code: 'failed' as const };
     }

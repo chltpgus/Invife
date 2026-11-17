@@ -76,10 +76,13 @@ export function splitKst(iso: string): { date: string; time: string } | null {
   };
 }
 
-/** 23:59 는 그 분의 마지막 밀리초까지. 그 외는 정각. */
-export function joinKst(date: string, time: string): string {
+/** 23:59 는 그 분의 마지막 밀리초까지. 그 외는 정각. 날짜나 시간이 비면 null. */
+export function joinKst(date: string, time: string): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) return null;
   const seconds = time === '23:59' ? '59.999' : '00';
-  return new Date(`${date}T${time}:${seconds}+09:00`).toISOString();
+  const parsed = new Date(`${date}T${time}:${seconds}+09:00`);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString();
 }
 
 export function givenNameFromFull(name: string): string {
@@ -135,10 +138,12 @@ export function setCeremonyDate(draft: EditorDraft, date: string): EditorDraft {
 }
 
 export function setDeadline(draft: EditorDraft, date: string, time: string): EditorDraft {
+  const deadline = joinKst(date, time);
+  if (!deadline) return draft;
   return {
     ...draft,
     deadlineCustom: true,
-    invitation: { ...draft.invitation, rsvp: { deadline: joinKst(date, time) } },
+    invitation: { ...draft.invitation, rsvp: { deadline } },
   };
 }
 
@@ -269,7 +274,7 @@ export function fieldIssues(draft: EditorDraft, now: Date): FieldIssue[] {
   issues.push(...transportIssues(invitation));
   issues.push(...accountIssues(invitation.accounts));
   const deadlineMessage = deadlineIssue(invitation.rsvp.deadline, invitation.ceremony.date, invitation.ceremony.time, now);
-  if (deadlineMessage) issues.push({ id: 'deadline', section: 'rsvp', message: deadlineMessage, publish: false });
+  if (deadlineMessage) issues.push({ id: 'deadline', section: 'rsvp', message: deadlineMessage, publish: true });
   return issues;
 }
 

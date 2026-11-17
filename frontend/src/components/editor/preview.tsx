@@ -77,6 +77,7 @@ export function GuestPreview({
           {envelope ? (
             <Envelope
               invitation={invitation}
+              preview
               onDone={() => {
                 document.documentElement.dataset.envelope = 'done';
                 onEnvelopeDone();

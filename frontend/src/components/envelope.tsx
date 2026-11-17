@@ -9,13 +9,17 @@ import { resolveAssetUrl } from '@/env';
 
 const storageKey = (slug: string) => `invife:opened:${slug}`;
 
-export function Envelope({ invitation, onDone }: { invitation: Invitation; onDone: () => void }) {
+export function Envelope({ invitation, onDone, preview = false }: { invitation: Invitation; onDone: () => void; preview?: boolean }) {
   const root = useRef<HTMLDivElement>(null);
   const card = useRef<HTMLDivElement>(null);
   const playing = useRef(false);
   const swiped = useRef(false);
   const point = useRef<{ x: number; y: number; t: number } | null>(null);
   const photo = invitation.photos[0];
+  const dateOk = /^\d{4}-\d{2}-\d{2}$/.test(invitation.ceremony.date);
+  const when = dateOk ? formatEnvelopeDate(invitation.ceremony.date) : preview ? <span className="sample-text">예식 날짜</span> : null;
+  const groom = invitation.groom.name.trim();
+  const bride = invitation.bride.name.trim();
 
   function remember() {
     try {
@@ -85,7 +89,9 @@ export function Envelope({ invitation, onDone }: { invitation: Invitation; onDon
           {eyebrows.cover}
         </p>
         <p className="display-name">
-          {invitation.groom.name} · {invitation.bride.name}
+          {preview && !groom ? <span className="sample-text">신랑 이름</span> : groom}
+          <span aria-hidden="true"> · </span>
+          {preview && !bride ? <span className="sample-text">신부 이름</span> : bride}
         </p>
         <button
           type="button"
@@ -136,7 +142,7 @@ export function Envelope({ invitation, onDone }: { invitation: Invitation; onDon
                 style={{ objectPosition: `${photo.focal.x * 100}% ${photo.focal.y * 100}%` }}
               />
             ) : (
-              <span className="env-fallback">{formatEnvelopeDate(invitation.ceremony.date)}</span>
+              <span className="env-fallback">{when}</span>
             )}
           </span>
           <svg className="env-layer pocket" viewBox="0 0 300 200" aria-hidden="true">
@@ -146,7 +152,7 @@ export function Envelope({ invitation, onDone }: { invitation: Invitation; onDon
             <path d="M0.75 0.75H299.25L150 112Z" />
           </svg>
         </button>
-        <p className="envelope-date">{formatEnvelopeDate(invitation.ceremony.date)}</p>
+        <p className="envelope-date">{when}</p>
         <p className="caption envelope-hint">
           <Icon name="arrow-up" size={18} />
           탭하거나 위로 밀어서 열기
