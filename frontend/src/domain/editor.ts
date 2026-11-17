@@ -380,7 +380,7 @@ function deceasedIssues(invitation: Invitation): FieldIssue[] {
       ['mother', '어머니'],
     ] as const) {
       const parent = family?.[slot];
-      if (!parent?.name.trim() || !parent.deceased) continue;
+      if (!parent?.deceased || !parent.name.trim()) continue;
       if (parent.deceasedStyle !== 'hanja' && parent.deceasedStyle !== 'hangul') {
         issues.push({
           id: `${side}-${slot}-style`,
@@ -392,6 +392,14 @@ function deceasedIssues(invitation: Invitation): FieldIssue[] {
     }
   }
   return issues;
+}
+
+/** 발행 400. `deceased_style` 은 필드 경로가 없어서, 이름 있는 고인만 그 사람의 표기 칸으로 붙인다. */
+export function issuesForPublishValidation(invitation: Invitation, error: { field?: string; reason?: string }): FieldIssue[] {
+  if (error.reason === 'deceased_style') return deceasedIssues(invitation);
+  if (!error.field) return [];
+  const section = error.field.startsWith('families.') || error.field.includes('-style') ? 'families' : error.field.startsWith('accounts') ? 'accounts' : error.field.includes('phone') ? 'contact' : 'cover';
+  return [{ id: error.field, section, message: '입력한 내용을 다시 확인해 주세요', publish: true }];
 }
 
 function phoneIssues(invitation: Invitation): FieldIssue[] {

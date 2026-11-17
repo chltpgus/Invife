@@ -207,7 +207,7 @@ export function EditorScreen({ routeId }: { routeId: string }) {
       {banner ? (
         <p className="ed-banner">
           <Icon name="info" size={18} />
-          <span>아직 이 브라우저에만 저장돼요. 다른 브라우저에서는 보이지 않아요. 발행할 때 카카오로 연결하면 어디서든 열 수 있어요.</span>
+          <span>다른 브라우저에서는 보이지 않아요. 발행할 때 카카오로 연결하면 어디서든 열 수 있어요.</span>
           <button type="button" className="ed-icon-btn" aria-label="안내 닫기" onClick={() => { setBanner(false); try { localStorage.setItem('invife:editor:banner', 'off'); } catch { /* 닫기만 한다 */ } }}>
             <Icon name="close" size={18} />
           </button>

@@ -48,10 +48,16 @@ describe('에디터 목 클라이언트', () => {
     expect(listed?.photo.src?.w800.startsWith('data:')).toBe(true);
     expect(listed?.etag).toBe(started.ok ? started.etag : '');
 
+    const focalOnly = await client.autosave(created.id, { photos: [{ id: signed.result.photoId, sort: 0, focal: { x: 0.2, y: 0.3 } }] }, listed?.etag ?? '');
+    expect(focalOnly.ok).toBe(true);
+    if (!focalOnly.ok) return;
+    expect(focalOnly.invitation.photos[0]?.status).toBe('ready');
+    expect(focalOnly.invitation.photos[0]?.focal).toEqual({ x: 0.2, y: 0.3 });
+
     const filtered = await client.autosave(
       created.id,
       { photos: [{ id: signed.result.photoId, sort: 0, focal: { x: 0.2, y: 0.3 }, crop: { x: 0, y: 0, width: 0.5, height: 0.5 }, filter: 'mono' }] },
-      listed?.etag ?? '',
+      focalOnly.invitation.etag,
     );
     expect(filtered.ok).toBe(true);
     if (!filtered.ok) return;

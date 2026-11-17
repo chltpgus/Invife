@@ -1,7 +1,9 @@
-import axios, { type AxiosInstance, type AxiosResponse } from 'axios';
+import axios, { type AxiosInstance, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { EditorClient } from '@/editor/client';
 import type { AutosaveResult, EditorInvitation, EditorInvitationSummary, EditorPhoto, PhotoStepResult, PresignResult } from '@/editor/contract';
 import { readEtag, withEtag } from '@/editor/etag';
+import { env } from '@/env';
 
 const http: AxiosInstance = axios.create({
   validateStatus: () => true,
@@ -10,41 +12,78 @@ const http: AxiosInstance = axios.create({
 
 const uploadHttp: AxiosInstance = axios.create({ validateStatus: () => true });
 
+let supabase: SupabaseClient | null = null;
+let signingIn: Promise<string | null> | null = null;
+
+function supabaseClient(): SupabaseClient | null {
+  if (!env.supabaseUrl || !env.supabaseAnonKey) return null;
+  supabase ??= createClient(env.supabaseUrl, env.supabaseAnonKey, {
+    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
+  });
+  return supabase;
+}
+
+/** 익명 세션의 access_token. 없거나 만료면 Supabase가 갱신하거나 새로 로그인한다. */
+export async function editorAccessToken(): Promise<string | null> {
+  const client = supabaseClient();
+  if (!client) return null;
+  if (!signingIn) {
+    signingIn = client.auth.getSession().then(async (existing) => {
+      if (existing.data.session?.access_token) return existing.data.session.access_token;
+      const signed = await client.auth.signInAnonymously();
+      if (signed.error || !signed.data.session) throw new Error('anonymous sign-in failed');
+      return signed.data.session.access_token;
+    }).finally(() => {
+      signingIn = null;
+    });
+  }
+  return signingIn;
+}
+
+const wired = new WeakSet<AxiosInstance>();
+
+function wireAuth(client: AxiosInstance, accessToken?: () => string | null) {
+  if (wired.has(client)) return;
+  wired.add(client);
+  client.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
+    const token = accessToken ? accessToken() : await editorAccessToken();
+    if (token) config.headers.set('Authorization', `Bearer ${token}`);
+    return config;
+  });
+}
+
 type InvitationResponse = { invitation?: EditorInvitation; etag?: string };
 type ConflictResponse = { error?: { code?: string; field?: string }; invitation?: EditorInvitation; etag?: string };
 
 /**
- * `{API_BASE}/v1/editor/invitations`. 자동 저장마다 `If-Match` 에 마지막 etag 를 넣는다.
- * 토큰이 있으면 `Authorization: Bearer`. 카카오 로그인은 이 클라이언트가 만들지 않는다.
+ * `{API_BASE}/v1/editor/invitations`. 요청마다 인터셉터가 익명 세션 access_token 을 Bearer 로 넣는다.
+ * 자동 저장은 PATCH 와 `If-Match`. 카카오 연결은 하지 않는다.
  */
 export function createApiEditorClient(baseUrl: string, options?: { client?: AxiosInstance; accessToken?: () => string | null }): EditorClient {
   const client = options?.client ?? http;
+  wireAuth(client, options?.accessToken);
   const root = baseUrl.replace(/\/$/, '');
-  const auth = () => {
-    const token = options?.accessToken?.();
-    return token ? { Authorization: `Bearer ${token}` } : {};
-  };
 
   return {
     async listInvitations() {
-      const response = await client.get<{ invitations: EditorInvitationSummary[] }>(`${root}/v1/editor/invitations`, { headers: auth() });
+      const response = await client.get<{ invitations: EditorInvitationSummary[] }>(`${root}/v1/editor/invitations`);
       if (response.status >= 400) throw new Error(`invitations failed: ${response.status}`);
       return response.data.invitations;
     },
     async createInvitation(body) {
-      const response = await client.post<InvitationResponse>(`${root}/v1/editor/invitations`, body, { headers: auth() });
+      const response = await client.post<InvitationResponse>(`${root}/v1/editor/invitations`, body);
       if (response.status >= 400 || !response.data.invitation) throw new Error(`create invitation failed: ${response.status}`);
       return withEtag(response.data.invitation, readEtag(header(response), response.data.etag));
     },
     async getInvitation(id) {
-      const response = await client.get<InvitationResponse>(`${root}/v1/editor/invitations/${encodeURIComponent(id)}`, { headers: auth() });
+      const response = await client.get<InvitationResponse>(`${root}/v1/editor/invitations/${encodeURIComponent(id)}`);
       if (response.status === 404) return null;
       if (response.status >= 400 || !response.data.invitation) throw new Error(`invitation failed: ${response.status}`);
       return withEtag(response.data.invitation, readEtag(header(response), response.data.etag));
     },
     async autosave(id, body, ifMatch): Promise<AutosaveResult> {
       const response = await client.patch<InvitationResponse & ConflictResponse>(`${root}/v1/editor/invitations/${encodeURIComponent(id)}`, body, {
-        headers: { ...auth(), 'If-Match': ifMatch },
+        headers: { 'If-Match': ifMatch },
       });
       const etag = readEtag(header(response), response.data.etag ?? response.data.invitation?.etag);
       if (response.status === 400 && response.data.error?.field === 'if-match') return { ok: false, code: 'validation', field: 'if-match' };
@@ -55,9 +94,9 @@ export function createApiEditorClient(baseUrl: string, options?: { client?: Axio
       return { ok: true, invitation: withEtag(response.data.invitation, etag) };
     },
     async presignPhoto(invitationId, body) {
-      const response = await client.post<PresignResult>(`${root}/v1/editor/invitations/${encodeURIComponent(invitationId)}/photos/presign`, body, { headers: auth() });
+      const response = await client.post<PresignResult>(`${root}/v1/editor/invitations/${encodeURIComponent(invitationId)}/photos/presign`, body);
       if (response.status >= 400 || !response.data.photoId) return { ok: false, message: '사진을 올리지 못했어요' };
-      const loaded = await client.get<InvitationResponse>(`${root}/v1/editor/invitations/${encodeURIComponent(invitationId)}`, { headers: auth() });
+      const loaded = await client.get<InvitationResponse>(`${root}/v1/editor/invitations/${encodeURIComponent(invitationId)}`);
       if (loaded.status >= 400 || !loaded.data.invitation) return { ok: false, message: '사진을 올리지 못했어요' };
       return { ok: true, result: response.data, invitation: withEtag(loaded.data.invitation, readEtag(header(loaded), loaded.data.etag)) };
     },
@@ -69,7 +108,6 @@ export function createApiEditorClient(baseUrl: string, options?: { client?: Axio
       const response = await client.post<{ photo?: EditorPhoto; etag?: string }>(
         `${root}/v1/editor/invitations/${encodeURIComponent(invitationId)}/photos/${encodeURIComponent(photoId)}/complete`,
         {},
-        { headers: auth() },
       );
       if ((response.status !== 202 && response.status !== 200) || !response.data.photo) {
         return { ok: false, code: 'failed', message: '사진을 열지 못했어요' };
@@ -78,7 +116,7 @@ export function createApiEditorClient(baseUrl: string, options?: { client?: Axio
       return { ok: true, photo: response.data.photo, etag };
     },
     async getPhotos(invitationId) {
-      const response = await client.get<{ etag?: string; photos?: EditorPhoto[] }>(`${root}/v1/editor/invitations/${encodeURIComponent(invitationId)}/photos`, { headers: auth() });
+      const response = await client.get<{ etag?: string; photos?: EditorPhoto[] }>(`${root}/v1/editor/invitations/${encodeURIComponent(invitationId)}/photos`);
       if (response.status === 404) return null;
       if (response.status >= 400 || !response.data.photos) throw new Error(`photos failed: ${response.status}`);
       return { etag: readEtag(header(response), response.data.etag) ?? '', photos: response.data.photos };
@@ -86,16 +124,15 @@ export function createApiEditorClient(baseUrl: string, options?: { client?: Axio
     async getPhoto(invitationId, photoId) {
       const response = await client.get<{ etag?: string; photo?: EditorPhoto }>(
         `${root}/v1/editor/invitations/${encodeURIComponent(invitationId)}/photos/${encodeURIComponent(photoId)}`,
-        { headers: auth() },
       );
       if (response.status === 404 || !response.data.photo) return null;
       if (response.status >= 400) throw new Error(`photo failed: ${response.status}`);
       return { etag: readEtag(header(response), response.data.etag) ?? '', photo: response.data.photo };
     },
     async deletePhoto(invitationId, photoId): Promise<PhotoStepResult> {
-      const response = await client.delete(`${root}/v1/editor/invitations/${encodeURIComponent(invitationId)}/photos/${encodeURIComponent(photoId)}`, { headers: auth() });
+      const response = await client.delete(`${root}/v1/editor/invitations/${encodeURIComponent(invitationId)}/photos/${encodeURIComponent(photoId)}`);
       if (response.status >= 400) return { ok: false, code: 'failed', message: '사진을 지우지 못했어요' };
-      const loaded = await client.get<InvitationResponse>(`${root}/v1/editor/invitations/${encodeURIComponent(invitationId)}`, { headers: auth() });
+      const loaded = await client.get<InvitationResponse>(`${root}/v1/editor/invitations/${encodeURIComponent(invitationId)}`);
       if (loaded.status >= 400 || !loaded.data.invitation) return { ok: false, code: 'failed', message: '사진을 지우지 못했어요' };
       const invitation = withEtag(loaded.data.invitation, readEtag(header(loaded), loaded.data.etag));
       return { ok: true, invitation, etag: invitation.etag };

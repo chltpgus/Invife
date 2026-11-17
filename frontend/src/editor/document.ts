@@ -74,9 +74,10 @@ export function applyAutosave(invitation: EditorInvitation, body: AutosaveBody, 
       if (!photo) continue;
       photo.sort = item.sort;
       if (item.focal) photo.focal = item.focal;
-      const cropChanged = item.crop !== undefined && JSON.stringify(item.crop) !== JSON.stringify(photo.crop);
+      const nextCrop = item.crop ?? { x: 0, y: 0, width: 1, height: 1 };
+      const cropChanged = nextCrop.x !== photo.crop.x || nextCrop.y !== photo.crop.y || nextCrop.width !== photo.crop.width || nextCrop.height !== photo.crop.height;
       const filterChanged = item.filter !== undefined && item.filter !== photo.filter;
-      if (item.crop) photo.crop = item.crop;
+      photo.crop = nextCrop;
       if (item.filter) photo.filter = item.filter;
       if ((cropChanged || filterChanged) && photo.src) photo.status = 'processing';
     }

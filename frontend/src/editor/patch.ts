@@ -125,13 +125,22 @@ function photosPatch(saved: EditorInvitation, draft: EditorDraft): AutosaveBody[
     const server = known.get(photo.id);
     if (!server) return [];
     const adjust = draft.photoAdjust[photo.id] ?? { crop: FULL_CROP, filter: draft.photoTone as PhotoFilter };
-    return [{ id: photo.id, sort, focal: photo.focal, crop: adjust.crop, filter: adjust.filter }];
+    const wantedCrop = sameCrop(adjust.crop, FULL_CROP) ? undefined : adjust.crop;
+    const wantedFilter = adjust.filter === server.filter ? undefined : adjust.filter;
+    const focalChanged = photo.focal.x !== server.focal.x || photo.focal.y !== server.focal.y;
+    const sortChanged = sort !== server.sort;
+    const cropChanged = wantedCrop ? !sameCrop(wantedCrop, server.crop) : !sameCrop(server.crop, FULL_CROP);
+    if (!focalChanged && !sortChanged && !cropChanged && !wantedFilter) return [];
+    const item: NonNullable<AutosaveBody['photos']>[number] = { id: photo.id, sort, focal: photo.focal };
+    if (wantedCrop) item.crop = wantedCrop;
+    if (wantedFilter) item.filter = wantedFilter;
+    return [item];
   });
-  const current = saved.photos
-    .filter((photo) => local.some((item) => item.id === photo.id))
-    .map((photo) => ({ id: photo.id, sort: photo.sort, focal: photo.focal, crop: photo.crop, filter: photo.filter }));
-  if (sameJson(local, current)) return undefined;
-  return local;
+  return local.length ? local : undefined;
+}
+
+function sameCrop(left: { x: number; y: number; width: number; height: number }, right: { x: number; y: number; width: number; height: number }): boolean {
+  return left.x === right.x && left.y === right.y && left.width === right.width && left.height === right.height;
 }
 
 function sameJson(left: unknown, right: unknown): boolean {

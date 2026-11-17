@@ -5,6 +5,7 @@ import {
   clearDirtyClock,
   fieldIssues,
   formatPhone,
+  issuesForPublishValidation,
   joinKst,
   makeDraft,
   markDirty,
@@ -74,7 +75,7 @@ describe('발행 검증', () => {
         ceremony: { ...next.invitation.ceremony, venueName: '더채플', address: '서울 강남구 도산대로 442' },
         photos: [{ id: 'p', width: 1000, height: 1000, focal: { x: 0.5, y: 0.4 }, src: { w800: 'a', w1200: 'a', w1600: 'a' }, lqip: 'a' }],
         families: {
-          groom: { relation: '아들', father: { name: '김철수', deceased: true }, mother: { name: '' } },
+          groom: { relation: '아들', father: { name: '김철수', deceased: true }, mother: { name: '', deceased: true } },
           bride: { relation: '딸', father: { name: '' }, mother: { name: '' } },
         },
       },
@@ -85,6 +86,9 @@ describe('발행 검증', () => {
     expect(messages).toContain('오늘 이후 날짜를 골라 주세요');
     expect(messages).toContain('예식 시간은 10분 단위로 골라 주세요');
     expect(messages).toContain('신랑 아버지 고인 표기 방식을 골라 주세요');
+    expect(messages.some((message) => message.includes('어머니'))).toBe(false);
+    const mapped = issuesForPublishValidation(next.invitation, { reason: 'deceased_style' });
+    expect(mapped.map((issue) => issue.id)).toEqual(['groom-father-style']);
   });
 
   it('마감은 지금보다 뒤이고 예식 시각보다 앞이어야 한다', () => {
