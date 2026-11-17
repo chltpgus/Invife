@@ -635,6 +635,9 @@
   font-size: 14px;
   font-weight: 500;
 }
+.ed-full .envelope-screen {
+  top: 48px;
+}
 .ed-full-body {
   min-height: 0;
   flex: 1;
