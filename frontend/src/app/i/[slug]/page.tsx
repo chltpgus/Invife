@@ -57,7 +57,7 @@ export default async function InvitationPage({ params }: { params: Promise<Param
   const invitation = await getGuestDataSource().getInvitation(slug);
   if (!invitation) notFound();
   const endedAt = resolveEndedAt(invitation.ceremony.date, siteConfig.endedEventAt).toISOString();
-  const bootstrap = `try{var k='invife:opened:'+${JSON.stringify(slug)};var ended=Date.now()>=Date.parse(${JSON.stringify(endedAt)});if(ended){document.documentElement.dataset.ended='1'}else{var reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;var opened=localStorage.getItem(k);if(opened||reduce){document.documentElement.dataset.envelope='skip';if(reduce&&!opened)localStorage.setItem(k,'1')}else{document.documentElement.dataset.envelope='show'}}}catch(e){document.documentElement.dataset.envelope='show'}`;
+  const bootstrap = `try{var path=location.pathname.replace(/\\/+$/,'');if(/^\\/i\\/[^/]+\\/(?:g|s)\\/[^/]+$/.test(path))document.documentElement.dataset.gate='pending';var k='invife:opened:'+${JSON.stringify(slug)};var ended=Date.now()>=Date.parse(${JSON.stringify(endedAt)});if(ended){document.documentElement.dataset.ended='1'}else{var reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;var opened=localStorage.getItem(k);if(opened||reduce){document.documentElement.dataset.envelope='skip';if(reduce&&!opened)localStorage.setItem(k,'1')}else{document.documentElement.dataset.envelope='show'}}}catch(e){document.documentElement.dataset.envelope='show'}`;
   return (
     <>
       <script dangerouslySetInnerHTML={{ __html: bootstrap }} />

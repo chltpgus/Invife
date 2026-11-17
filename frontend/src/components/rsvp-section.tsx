@@ -10,6 +10,7 @@ import {
   companionsToSend,
   COMPANION_MAX,
   editStorageKey,
+  guestName,
   initialPhase,
   needsTurnstile,
   normalizeGuestName,
@@ -30,11 +31,13 @@ export function RsvpSection({
   link,
   hasContact,
   onMissing,
+  onResolved,
 }: {
   invitation: Invitation;
   link: GuestLink;
   hasContact: boolean;
   onMissing: () => void;
+  onResolved?: () => void;
 }) {
   const client = useRef(createRsvpClient()).current;
   const store = useRef(browserStore()).current;
@@ -56,13 +59,17 @@ export function RsvpSection({
     if (contextQuery.isError) {
       setUnavailable(true);
       setReady(true);
+      onResolved?.();
       return;
     }
     const result = contextQuery.data;
     if (!result) return;
     if (!result.ok) {
         if (result.code === 'not_found') onMissing();
-        else setUnavailable(true);
+        else {
+          setUnavailable(true);
+          onResolved?.();
+        }
         setReady(true);
         return;
       }
@@ -81,7 +88,8 @@ export function RsvpSection({
         setEditKey(stored?.editKey);
       }
       setReady(true);
-  }, [contextQuery.data, contextQuery.isError, invitation.slug, token, onMissing, store]);
+      onResolved?.();
+  }, [contextQuery.data, contextQuery.isError, invitation.slug, token, onMissing, onResolved, store]);
 
   return (
     <section className="section" id="rsvp" aria-labelledby="rsvp-title">
@@ -157,8 +165,9 @@ function RsvpForm({
   );
   const [attending, setAttending] = useState<boolean | null>(initialResponse && !revoked ? initialResponse.attending : null);
   const [companions, setCompanions] = useState(initialResponse && !revoked ? initialResponse.companions : 0);
-  const [name, setName] = useState(revoked ? '' : initialResponse?.name || prefillName);
+  const [name, setName] = useState(revoked ? '' : guestName(initialResponse, prefillName));
   const [editingName, setEditingName] = useState(false);
+  const editedOnce = useRef(false);
   const [turnstileToken, setTurnstileToken] = useState('');
   const [turnstileError, setTurnstileError] = useState(false);
   const [widgetKey, setWidgetKey] = useState(0);
@@ -167,10 +176,10 @@ function RsvpForm({
   const resultRef = useRef<HTMLHeadingElement>(null);
   const nameId = useId();
   const errorId = useId();
-  const personalPrefill = link.channel === 'personal' && !revoked && Boolean(prefillName);
+  const personalPrefill = link.channel === 'personal' && !revoked && Boolean(name);
   const turnstile = needsTurnstile(link, revoked) && Boolean(env.turnstileSiteKey);
   const caption = deadlineCaption(deadline);
-  const summary = response ? responseSummary(response, true) : '';
+  const summary = response ? responseSummary(response, link.channel !== 'personal') : '';
 
   useEffect(() => {
     if (phase.name === 'success') resultRef.current?.focus();
@@ -194,7 +203,7 @@ function RsvpForm({
     if (!response) return;
     setAttending(response.attending);
     setCompanions(response.companions);
-    setName(response.name);
+    setName(guestName(response, prefillName));
     setEditingName(link.channel !== 'personal');
     setPhase({ name: 'form', intent: 'edit', banner: 'none', submitting: false, nameError: null });
   }
@@ -250,6 +259,7 @@ function RsvpForm({
       return;
     }
     const next = phaseAfterResult(result, phase.intent === 'edit');
+    if (next?.name === 'success' && next.edited) editedOnce.current = true;
     if (next) setPhase(next);
   }
 
@@ -303,9 +313,9 @@ function RsvpForm({
           {phase.intent === 'edit' && response ? <p className="caption">이전 응답: {summary}</p> : null}
           {personalPrefill && !editingName ? (
             <div className="name-preset">
-              <p className="body-strong">{prefillName} 님으로 응답해요</p>
+              <p className="body-strong">{name} 님으로 응답해요</p>
               <button type="button" className="btn-text" onClick={() => setEditingName(true)}>
-                {prefillName} 님이 아니신가요?
+                {name} 님이 아니신가요?
               </button>
             </div>
           ) : (
@@ -393,7 +403,7 @@ function RsvpForm({
             {submitLabel(phase)}
           </button>
           {phase.intent === 'edit' ? (
-            <button type="button" className="btn-text" onClick={() => setPhase({ name: 'success', edited: false })}>
+            <button type="button" className="btn-text" onClick={() => setPhase({ name: 'success', edited: editedOnce.current })}>
               취소
             </button>
           ) : null}
@@ -407,7 +417,7 @@ function bannerText(phase: Extract<RsvpPhase, { name: 'form' }>): string {
   if (phase.banner === 'rate_limited') {
     return phase.retryAfter ? `잠시 후 다시 시도해 주세요. ${phase.retryAfter}초 뒤예요.` : '잠시 후 다시 시도해 주세요';
   }
-  if (phase.banner === 'unavailable') return '지금은 응답을 받을 수 없어요. 잠시 후 다시 시도해 주세요.';
+  if (phase.banner === 'unavailable') return '지금은 응답을 받을 수 없어요.';
   if (phase.banner === 'edit_forbidden') return '이 기기에서는 응답을 수정할 수 없어요.';
   if (phase.banner === 'turnstile') return '확인을 다시 해 주세요.';
   if (phase.banner === 'validation') return '입력한 내용을 확인해 주세요.';
@@ -420,16 +430,24 @@ function Turnstile({ siteKey, onToken, error }: { siteKey: string; onToken: (tok
     const holder = ref.current;
     if (!holder) return;
     let cancelled = false;
-    const script = document.createElement('script');
-    script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
-    script.async = true;
-    script.onload = () => {
-      if (cancelled || !window.turnstile || !ref.current) return;
-      window.turnstile.render(ref.current, { sitekey: siteKey, callback: onToken });
+    let widgetId: string | undefined;
+    let script: HTMLScriptElement | undefined;
+    const render = () => {
+      if (cancelled || !window.turnstile || !ref.current || widgetId) return;
+      widgetId = window.turnstile.render(ref.current, { sitekey: siteKey, callback: onToken });
     };
-    document.body.appendChild(script);
+    if (window.turnstile) render();
+    else {
+      script = document.createElement('script');
+      script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+      script.async = true;
+      script.onload = render;
+      document.body.appendChild(script);
+    }
     return () => {
       cancelled = true;
+      if (widgetId) window.turnstile?.remove(widgetId);
+      script?.remove();
     };
   }, [onToken, siteKey]);
   return (
@@ -448,7 +466,8 @@ function Turnstile({ siteKey, onToken, error }: { siteKey: string; onToken: (tok
 declare global {
   interface Window {
     turnstile?: {
-      render: (element: HTMLElement, options: { sitekey: string; callback: (token: string) => void }) => void;
+      render: (element: HTMLElement, options: { sitekey: string; callback: (token: string) => void }) => string;
+      remove: (widgetId: string) => void;
     };
   }
 }

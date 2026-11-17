@@ -13,7 +13,7 @@ npm run dev
 
 환경 변수는 `.env.example`. 키가 없어도 페이지는 뜨고, 지도·공유·Turnstile 만 스펙의 폴백으로 내려간다.
 
-빌드는 초대장마다 `/i/{slug}/` 하나만 만든다. `/g/` 와 `/s/` 는 그 파일로 rewrite 한다. `next dev` 는 `next.config.ts`, 정적 호스트는 `public/_redirects` 를 본다. 자세한 표는 `docs/api/guest-data-contract.md`. 동적 청크 폴더의 대괄호는 빌드 뒤에 빼서, 그 경로를 거절하는 호스트에서도 클릭이 붙게 한다.
+빌드는 초대장마다 `/i/{slug}/` 하나만 만든다. `/g/` 와 `/s/` 는 그 파일로 rewrite 한다. `next dev` 는 `next.config.ts`, Cloudflare Pages 는 `public/_redirects` 와 `public/_headers`, Vercel 은 `vercel.json` 을 본다. 리라이트와 Referrer-Policy·CSP 는 두 호스트가 같다. 자세한 표는 `docs/api/guest-data-contract.md`. 동적 청크 폴더의 대괄호는 빌드 뒤에 빼서, 그 경로를 거절하는 호스트에서도 클릭이 붙게 한다.
 
 API 호출은 axios 다. 참석 칸의 조회는 TanStack Query, 제출은 mutation 이다. 색·글자·간격·모서리는 `docs/design/tokens.json` 을 Tailwind 설정에 연결했다.
 

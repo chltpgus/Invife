@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createFixtureRsvpClient, type MemoryStore } from '@/rsvp/client';
+import type { MemoryStore } from '@/rsvp/client';
+import { createFixtureRsvpClient } from '@/rsvp/fixture-client';
 
 function memory(): MemoryStore {
   const data = new Map<string, string>();

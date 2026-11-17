@@ -17,6 +17,13 @@ export type RsvpPhase =
   | { name: 'success'; edited: boolean }
   | { name: 'closed' };
 
+/** 저장된 응답 이름이 있으면 그 이름을 쓰고, 없을 때만 미리 채운 이름을 쓴다. */
+export function guestName(existing: Pick<RsvpResponse, 'name'> | null | undefined, prefillName: string): string {
+  const saved = existing?.name ? normalizeGuestName(existing.name) : '';
+  if (saved) return saved;
+  return prefillName;
+}
+
 export function initialPhase(closed: boolean, existing: RsvpResponse | null): RsvpPhase {
   if (closed) return { name: 'closed' };
   if (existing) return { name: 'success', edited: false };

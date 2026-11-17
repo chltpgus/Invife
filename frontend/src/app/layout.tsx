@@ -1,34 +1,8 @@
 import type { Metadata, Viewport } from 'next';
 import type { ReactNode } from 'react';
+import { contentSecurityPolicy } from '@/csp';
 import { env } from '@/env';
 import './globals.css';
-
-function contentSecurityPolicy(): string {
-  const connect = ["'self'", 'https://dapi.kakao.com', 'https://*.kakao.com', 'https://*.daumcdn.net', 'https://kauth.kakao.com', 'https://kapi.kakao.com'];
-  const images = ["'self'", 'data:', 'blob:', 'https://*.daumcdn.net', 'https://*.kakaocdn.net', 'https://dapi.kakao.com'];
-  for (const value of [env.apiBaseUrl, env.r2BaseUrl]) {
-    if (!value) continue;
-    try {
-      const origin = new URL(value).origin;
-      connect.push(origin);
-      images.push(origin);
-    } catch {
-      /* 잘못된 URL 은 CSP 에 넣지 않는다 */
-    }
-  }
-  return [
-    "default-src 'self'",
-    "base-uri 'self'",
-    "object-src 'none'",
-    "form-action 'self'",
-    "script-src 'self' 'unsafe-inline' https://dapi.kakao.com https://t1.kakaocdn.net https://challenges.cloudflare.com",
-    "style-src 'self' 'unsafe-inline'",
-    `img-src ${images.join(' ')}`,
-    `connect-src ${connect.join(' ')}`,
-    "font-src 'self'",
-    'frame-src https://challenges.cloudflare.com',
-  ].join('; ');
-}
 
 export const metadata: Metadata = {
   metadataBase: new URL(env.siteUrl),

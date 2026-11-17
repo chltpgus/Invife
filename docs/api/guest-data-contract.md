@@ -21,13 +21,13 @@
 | 호스트 | 설정 |
 |---|---|
 | `next dev` | `next.config.ts` 의 `rewrites` |
-| Cloudflare Pages, Netlify | `frontend/public/_redirects` (`200` rewrite) |
-| Vercel | `vercel.json` 의 `rewrites`: `/i/:slug/g/:token` → `/i/:slug`, `/i/:slug/s/:token` → `/i/:slug` (슬래시 있는 경로도 같게) |
+| Cloudflare Pages, Netlify | `frontend/public/_redirects` (`200` rewrite) 와 `frontend/public/_headers` |
+| Vercel | `frontend/vercel.json`. rewrite 와 헤더는 `_redirects`·`_headers` 와 같다. `/i/:slug/g/:token` 과 `/i/:slug/s/:token`(슬래시 있는 경로도) → `/i/:slug/index.html` |
 | nginx | `rewrite ^/i/([^/]+)/(g\|s)/[^/]+/?$ /i/$1/ last;` |
 
 빌드가 끝나면 `[slug]` 청크 폴더를 `slug` 로 바꾸고 HTML 의 `%5Bslug%5D` 참조도 고친다. 대괄호 경로를 404 로 주는 호스트에서는 글은 보이는데 클릭이 전부 죽는다.
 
-토큰이 없거나 초대장이 내려갔으면 404, `noindex`. 없는 토큰도 404. 폐기된 받는 사람 토큰은 초대장을 연 뒤 RSVP 만 공용과 같이 빈 이름 + Turnstile 이다. 폐기 전 이름과 응답은 보여 주지 않는다.
+슬러그가 없거나 초대장이 내려갔으면 404, `noindex`. 정적 호스트는 `/g/`, `/s/` 를 슬러그 셸로 rewrite 하므로 없는 토큰도 HTTP 200이다. 본문은 참석 맥락이 오기 전에 그리지 않고, 맥락이 404면 「초대장을 찾을 수 없어요」. 폐기된 받는 사람 토큰은 초대장을 연 뒤 RSVP 만 공용과 같이 빈 이름 + Turnstile 이다. 폐기 전 이름과 응답은 보여 주지 않는다.
 
 토큰은 서버에서 해시로만 저장한다. 페이지가 읽는 공개 JSON 에는 없다.
 
@@ -88,9 +88,10 @@ type RsvpContext = {
 - `invite`: 토큰을 보내지 않는다. `prefillName` 도 없다.
 - `personal`: `prefillName` 과 그 사람의 `response`. 폐기는 `revoked: true` 만 주고 이름·응답은 없다.
 - `rsvp_link`: 출처 표식 토큰. 응답 본문은 이 기기의 `localStorage` 에 있다.
-- 없는 토큰·없는 슬러그: 404.
+- 없는 토큰·없는 슬러그: API 는 404. 정적 호스트의 셸은 HTTP 200이고, 화면은 그 404를 따른다.
+- 이미 있는 응답의 `name` 이 `prefillName` 보다 우선한다. 수정 화면과 제출은 그 이름을 쓴다.
 
-끝난 행사인지는 빌드 시각이 아니라 브라우저 시계로 예식 다음 날 00:00 KST(또는 배포 설정의 한 시각)와 비교한다.
+끝난 행사인지는 빌드 시각이 아니라 브라우저 시계로 예식 다음 날 00:00 KST(또는 배포 설정의 한 시각)와 비교한다. 셸에는 끝난 행사 화면이 같이 있고, `html[data-ended=1]` CSS 가 수화 전에 본문을 가리고 그 화면을 보여 준다.
 
 ## 4. RSVP 제출
 
@@ -155,7 +156,7 @@ type RsvpSubmitBody = {
 
 ## 6. 리퍼러와 지도
 
-`/i/*` 는 `Referrer-Policy: no-referrer`. 페이지 `<meta name="referrer">` 와 호스트 헤더를 같이 둔다. Cloudflare/Netlify 는 `frontend/public/_headers`. nginx 는 `add_header Referrer-Policy no-referrer;`. Vercel 은 `vercel.json` 의 `headers` 에서 `/i/(.*)`.
+`/i/*` 는 `Referrer-Policy: no-referrer` 와 페이지와 같은 CSP. `<meta name="referrer">`, `<meta http-equiv="Content-Security-Policy">`, 호스트 헤더를 같이 둔다. Cloudflare/Netlify 는 `frontend/public/_headers`. Vercel 은 `frontend/vercel.json` 의 `headers` 에서 `/i/(.*)`. 두 파일의 헤더 값은 같다. nginx 는 `add_header Referrer-Policy no-referrer;`. 스크립트 출처는 `https://*.kakaocdn.net` 이다.
 
 지도는 카카오 맵 JavaScript SDK 다. `NEXT_PUBLIC_KAKAO_MAP_KEY` 는 도메인이 등록된 **JavaScript 키**다. `NEXT_PUBLIC_KAKAO_REST_API_KEY`(로그인 client_id)는 쓰지 않는다. 키가 없거나 SDK 가 실패하면 핀과 「지도를 불러오지 못했어요」만 남기고, 주소 복사와 지도 앱 버튼은 그대로다. 키를 브라우저에 두기 싫으면 서버가 정적 지도를 대신 받아 캐시하는 프록시를 쓸 수 있다. 약관은 아직 미확인이다.
 

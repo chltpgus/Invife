@@ -39,13 +39,28 @@ export function InvitationView({ invitation }: { invitation: Invitation }) {
   const [keyboard, setKeyboard] = useState(false);
   const [accountsOpen, setAccountsOpen] = useState({ groom: false, bride: false });
   const [missing, setMissing] = useState(false);
+  const [gateReady, setGateReady] = useState(false);
   const markMissing = useCallback(() => setMissing(true), []);
+  const releaseGate = useCallback(() => {
+    const root = document.documentElement;
+    if (root.dataset.gate !== 'pending') return;
+    setEnvelope(root.dataset.envelope === 'show');
+    setEnded(root.dataset.ended === '1');
+    setGateReady(true);
+  }, []);
   const flags = sectionFlags(invitation);
 
   useEffect(() => {
-    setEnded(document.documentElement.dataset.ended === '1');
-    setEnvelope(document.documentElement.dataset.envelope === 'show');
+    const root = document.documentElement;
+    if (root.dataset.gate === 'pending') return;
+    setEnded(root.dataset.ended === '1');
+    setEnvelope(root.dataset.envelope === 'show');
   }, []);
+
+  useEffect(() => {
+    if (!gateReady && !missing) return;
+    delete document.documentElement.dataset.gate;
+  }, [gateReady, missing]);
 
   useEffect(() => {
     const cover = document.getElementById('cover');
@@ -98,30 +113,37 @@ export function InvitationView({ invitation }: { invitation: Invitation }) {
   else if (ended) body = <EndedView invitation={invitation} />;
   else
     body = (
-    <ToastProvider lift={showNav}>
-      <div className={`column ${showNav ? 'has-nav' : ''}`} data-theme={invitation.theme}>
-        {envelope ? <Envelope invitation={invitation} onDone={() => setEnvelope(false)} /> : null}
-        <Cover invitation={invitation} />
-        <Story invitation={invitation} />
-        <When invitation={invitation} />
-        <Gallery photos={invitation.photos} index={viewer} onIndex={setViewer} />
-        <Directions invitation={invitation} />
-        <Accounts
-          note={invitation.accountsNote}
-          accounts={invitation.accounts}
-          open={accountsOpen}
-          onToggle={(side) => setAccountsOpen((currentOpen) => ({ ...currentOpen, [side]: !currentOpen[side] }))}
-        />
-        <RsvpSection invitation={invitation} link={link} hasContact={flags.contact} onMissing={markMissing} />
-        <ShareButton invitation={invitation} />
+    <>
+      <div className="ended-before">
+        <EndedView invitation={invitation} />
       </div>
-      <QuickNav
-        items={items}
-        current={current}
-        visible={showNav}
-        onAccounts={() => setAccountsOpen({ groom: true, bride: true })}
-      />
-    </ToastProvider>
+      <div className="live-invite">
+        <ToastProvider lift={showNav}>
+          <div className={`column ${showNav ? 'has-nav' : ''}`} data-theme={invitation.theme}>
+            {envelope ? <Envelope invitation={invitation} onDone={() => setEnvelope(false)} /> : null}
+            <Cover invitation={invitation} />
+            <Story invitation={invitation} />
+            <When invitation={invitation} />
+            <Gallery photos={invitation.photos} index={viewer} onIndex={setViewer} />
+            <Directions invitation={invitation} />
+            <Accounts
+              note={invitation.accountsNote}
+              accounts={invitation.accounts}
+              open={accountsOpen}
+              onToggle={(side) => setAccountsOpen((currentOpen) => ({ ...currentOpen, [side]: !currentOpen[side] }))}
+            />
+            <RsvpSection invitation={invitation} link={link} hasContact={flags.contact} onMissing={markMissing} onResolved={releaseGate} />
+            <ShareButton invitation={invitation} />
+          </div>
+          <QuickNav
+            items={items}
+            current={current}
+            visible={showNav}
+            onAccounts={() => setAccountsOpen({ groom: true, bride: true })}
+          />
+        </ToastProvider>
+      </div>
+    </>
     );
 
   return <QueryClientProvider client={queries}>{body}</QueryClientProvider>;

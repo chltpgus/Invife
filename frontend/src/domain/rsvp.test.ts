@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   canSubmitRsvp,
   companionsToSend,
+  guestName,
   initialPhase,
   needsTurnstile,
   normalizeGuestName,
@@ -48,6 +49,13 @@ describe('RSVP 상태', () => {
     expect(needsTurnstile({ channel: 'personal', token: 't' }, true)).toBe(true);
     expect(needsTurnstile({ channel: 'invite' }, false)).toBe(true);
     expect(needsTurnstile({ channel: 'rsvp_link', token: 's' }, false)).toBe(true);
+  });
+
+  it('이미 있는 응답 이름이 미리 채운 이름보다 우선한다', () => {
+    expect(guestName({ name: '박철수' }, '김지훈')).toBe('박철수');
+    expect(guestName({ name: '  박철수  ' }, '김지훈')).toBe('박철수');
+    expect(guestName({ name: '   ' }, '김지훈')).toBe('김지훈');
+    expect(guestName(null, '김지훈')).toBe('김지훈');
   });
 
   it('재방문·마감·수정 성공·429·폐기', () => {
