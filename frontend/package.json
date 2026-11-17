@@ -1,0 +1,44 @@
+{
+  "name": "invife-frontend",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "overrides": {
+    "magic-string": "0.30.21"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "prebuild": "tsx scripts/generate-og.ts",
+    "build": "next build && tsx scripts/fix-export-chunks.ts",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "samples": "tsx scripts/generate-samples.ts"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.107.2",
+    "axios": "^1.21.1",
+    "next": "^15.5.4",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  },
+  "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2",
+    "@tailwindcss/postcss": "^4.3.5",
+    "@types/node": "^22.15.30",
+    "@types/react": "^19.1.12",
+    "@types/react-dom": "^19.1.9",
+    "eslint": "^9.35.0",
+    "eslint-config-next": "^15.5.4",
+    "postcss": "^8.5.33",
+    "satori": "^0.18.3",
+    "sharp": "^0.34.3",
+    "tailwindcss": "^4.3.5",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}
