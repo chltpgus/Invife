@@ -234,7 +234,7 @@ type EditorInvitationSummary = {
 
 `PATCH /v1/editor/invitations/:id`
 
-보낸 필드만 바꾼다. 없는 필드는 유지다. `families`, `accounts`, `photos`(메타만)를 보내면 그 배열은 **통째로 교체**다.
+보낸 필드만 바꾼다. 없는 필드는 유지다. `families`, `accounts`를 보내면 그 배열은 **통째로 교체**다. `photos`는 나열한 id의 `sort`와 `focal`만 바꾼다. 목록에서 뺀 사진은 지우지 않는다. 삭제는 `DELETE .../photos/:photoId`다.
 
 ```ts
 type AutosaveBody = {

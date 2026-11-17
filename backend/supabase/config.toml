@@ -1,0 +1,52 @@
+# 로컬 Supabase. `cd backend && npx supabase start`
+# 익명 로그인과 Manual linking(베타)은 발행 흐름에 필요하다.
+# 카카오 client_id 는 REST API 키(로그인용)다. 브라우저 번들에 넣지 않는다.
+
+project_id = "invife"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 15
+
+[db.seed]
+enabled = true
+sql_paths = ["./seed.sql"]
+
+[realtime]
+enabled = false
+
+[studio]
+enabled = true
+port = 54323
+
+[storage]
+enabled = false
+
+[auth]
+enabled = true
+site_url = "http://localhost:3000"
+additional_redirect_urls = ["http://localhost:3000/**"]
+jwt_expiry = 3600
+enable_signup = true
+enable_anonymous_sign_ins = true
+enable_manual_linking = true
+
+[auth.rate_limit]
+anonymous_users = 30
+
+[auth.external.kakao]
+enabled = false
+client_id = "env(KAKAO_CLIENT_ID)"
+secret = "env(KAKAO_CLIENT_SECRET)"
+redirect_uri = ""
+
+[edge_runtime]
+enabled = false
