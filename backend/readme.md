@@ -74,7 +74,7 @@ npm run dev
 
 ## 사진
 
-`POST .../photos/:id/complete` 안에서 `src/photos/process.ts`가 돈다.
+`POST .../photos/:id/complete` 는 `202` 로 바로 돌아오고, 변환은 그 다음 같은 프로세스에서 돈다. 상태는 `GET /v1/editor/invitations/:id/photos` 로 본다. 크롭과 필터는 변종에 구워지며, 다시 만드는 동안 이전 파일을 그대로 준다. 파이프라인은 `src/photos/process.ts`다.
 
 1. 원본을 회전하고 가로 2400 이하의 WebP 마스터로 둔다. 필터는 마스터에 넣지 않는다.
 2. 800 / 1200 / 1600 / 썸네일(400) WebP에 `original` · `warm` · `mono`를 적용한다.

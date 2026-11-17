@@ -15,6 +15,7 @@ export type AppDeps = {
   storage: ObjectStorage;
   now?: () => Date;
   verifyTurnstile?: (token: string, ip: string) => Promise<'ok' | 'failed' | 'unavailable'>;
+  schedule?: (task: () => Promise<void>) => void;
 };
 
 type AppEnv = { Variables: { claims: AuthClaims } };
@@ -30,7 +31,13 @@ export function createApp(deps: AppDeps) {
       deps.verifyTurnstile ??
       ((token, ip) => verifyTurnstile(token, ip, deps.config.turnstileSecret, deps.config.turnstileHostname)),
   };
-  const editorDeps: editor.EditorDeps = { pool: deps.pool, config: deps.config, storage: deps.storage, now };
+  const editorDeps: editor.EditorDeps = {
+    pool: deps.pool,
+    config: deps.config,
+    storage: deps.storage,
+    now,
+    schedule: deps.schedule,
+  };
 
   app.use(
     '*',
@@ -86,49 +93,54 @@ export function createApp(deps: AppDeps) {
     await next();
   });
 
-  app.get('/v1/editor/session', async (c) => c.json(await editor.session(editorDeps, claims(c))));
-  app.get('/v1/editor/notices', async (c) => c.json(await editor.listNotices(editorDeps, claims(c))));
-  app.get('/v1/editor/invitations', async (c) => c.json(await editor.listInvitations(editorDeps, claims(c))));
+  app.get('/v1/editor/session', async (c) => editorJson(c, await editor.session(editorDeps, claims(c))));
+  app.get('/v1/editor/notices', async (c) => editorJson(c, await editor.listNotices(editorDeps, claims(c))));
+  app.get('/v1/editor/invitations', async (c) => editorJson(c, await editor.listInvitations(editorDeps, claims(c))));
   app.post('/v1/editor/invitations', async (c) =>
-    c.json(await editor.createInvitation(editorDeps, claims(c), await readJson(c), clientIp(c.req.header('x-forwarded-for'))), 201),
+    editorJson(c, await editor.createInvitation(editorDeps, claims(c), await readJson(c), clientIp(c.req.header('x-forwarded-for'))), 201),
   );
-  app.get('/v1/editor/invitations/:id', async (c) => c.json(await editor.getInvitation(editorDeps, claims(c), c.req.param('id'))));
+  app.get('/v1/editor/invitations/:id', async (c) => editorJson(c, await editor.getInvitation(editorDeps, claims(c), c.req.param('id'))));
   app.patch('/v1/editor/invitations/:id', async (c) =>
-    c.json(await editor.autosave(editorDeps, claims(c), c.req.param('id'), await readJson(c), c.req.header('if-match'))),
+    editorJson(c, await editor.autosave(editorDeps, claims(c), c.req.param('id'), await readJson(c), c.req.header('if-match'))),
   );
-  app.post('/v1/editor/invitations/:id/publish', async (c) => c.json(await editor.publish(editorDeps, claims(c), c.req.param('id'))));
-  app.post('/v1/editor/invitations/:id/apply', async (c) => c.json(await editor.applyChanges(editorDeps, claims(c), c.req.param('id'))));
-  app.post('/v1/editor/invitations/:id/unpublish', async (c) => c.json(await editor.unpublish(editorDeps, claims(c), c.req.param('id'))));
+  app.post('/v1/editor/invitations/:id/publish', async (c) => editorJson(c, await editor.publish(editorDeps, claims(c), c.req.param('id'))));
+  app.post('/v1/editor/invitations/:id/apply', async (c) => editorJson(c, await editor.applyChanges(editorDeps, claims(c), c.req.param('id'))));
+  app.post('/v1/editor/invitations/:id/unpublish', async (c) => editorJson(c, await editor.unpublish(editorDeps, claims(c), c.req.param('id'))));
   app.delete('/v1/editor/invitations/:id', async (c) =>
-    c.json(await editor.removeInvitation(editorDeps, claims(c), c.req.param('id'), await readJson(c))),
+    editorJson(c, await editor.removeInvitation(editorDeps, claims(c), c.req.param('id'), await readJson(c))),
   );
   app.post('/v1/editor/invitations/:id/photos/presign', async (c) =>
-    c.json(await editor.presignPhoto(editorDeps, claims(c), c.req.param('id'), await readJson(c)), 201),
+    editorJson(c, await editor.presignPhoto(editorDeps, claims(c), c.req.param('id'), await readJson(c)), 201),
   );
-  app.post('/v1/editor/invitations/:id/photos/:photoId/complete', async (c) =>
-    c.json(await editor.completePhoto(editorDeps, claims(c), c.req.param('id'), c.req.param('photoId'))),
+  app.post('/v1/editor/invitations/:id/photos/:photoId/complete', async (c) => {
+    const body = await editor.completePhoto(editorDeps, claims(c), c.req.param('id'), c.req.param('photoId'));
+    return editorJson(c, body, body.photo.status === 'processing' ? 202 : 200);
+  });
+  app.get('/v1/editor/invitations/:id/photos', async (c) => editorJson(c, await editor.listPhotos(editorDeps, claims(c), c.req.param('id'))));
+  app.get('/v1/editor/invitations/:id/photos/:photoId', async (c) =>
+    editorJson(c, await editor.getPhoto(editorDeps, claims(c), c.req.param('id'), c.req.param('photoId'))),
   );
   app.delete('/v1/editor/invitations/:id/photos/:photoId', async (c) => {
     await editor.deletePhoto(editorDeps, claims(c), c.req.param('id'), c.req.param('photoId'));
     return c.body(null, 204);
   });
-  app.get('/v1/editor/invitations/:id/rsvp', async (c) => c.json(await editor.rsvpDashboard(editorDeps, claims(c), c.req.param('id'))));
+  app.get('/v1/editor/invitations/:id/rsvp', async (c) => editorJson(c, await editor.rsvpDashboard(editorDeps, claims(c), c.req.param('id'))));
   app.post('/v1/editor/invitations/:id/recipients', async (c) =>
-    c.json(await editor.addRecipients(editorDeps, claims(c), c.req.param('id'), await readJson(c)), 201),
+    editorJson(c, await editor.addRecipients(editorDeps, claims(c), c.req.param('id'), await readJson(c)), 201),
   );
   app.patch('/v1/editor/invitations/:id/recipients/:recipientId', async (c) =>
-    c.json(await editor.renameRecipient(editorDeps, claims(c), c.req.param('id'), c.req.param('recipientId'), await readJson(c))),
+    editorJson(c, await editor.renameRecipient(editorDeps, claims(c), c.req.param('id'), c.req.param('recipientId'), await readJson(c))),
   );
   app.post('/v1/editor/invitations/:id/recipients/:recipientId/revoke', async (c) =>
-    c.json(await editor.revokeRecipient(editorDeps, claims(c), c.req.param('id'), c.req.param('recipientId'))),
+    editorJson(c, await editor.revokeRecipient(editorDeps, claims(c), c.req.param('id'), c.req.param('recipientId'))),
   );
   app.post('/v1/editor/invitations/:id/recipients/:recipientId/reissue', async (c) =>
-    c.json(await editor.reissueRecipient(editorDeps, claims(c), c.req.param('id'), c.req.param('recipientId'))),
+    editorJson(c, await editor.reissueRecipient(editorDeps, claims(c), c.req.param('id'), c.req.param('recipientId'))),
   );
   app.post('/v1/editor/claim-tickets', async (c) =>
-    c.json(await editor.issueClaim(editorDeps, claims(c), await readJson(c)), 201),
+    editorJson(c, await editor.issueClaim(editorDeps, claims(c), await readJson(c)), 201),
   );
-  app.post('/v1/editor/drafts/claim', async (c) => c.json(await editor.claimDrafts(editorDeps, claims(c), await readJson(c))));
+  app.post('/v1/editor/drafts/claim', async (c) => editorJson(c, await editor.claimDrafts(editorDeps, claims(c), await readJson(c))));
 
   app.put('/v1/editor/uploads/:token', async (c) => {
     const bytes = Buffer.from(await c.req.arrayBuffer());
@@ -141,6 +153,24 @@ export function createApp(deps: AppDeps) {
 
 function claims(c: Context<AppEnv>): AuthClaims {
   return c.get('claims');
+}
+
+function editorJson(c: Context, body: unknown, status: 200 | 201 | 202 = 200) {
+  const etag = readEtag(body);
+  if (etag) c.header('ETag', `"${etag}"`);
+  return c.json(body as Record<string, unknown>, status);
+}
+
+function readEtag(body: unknown): string | null {
+  if (!body || typeof body !== 'object') return null;
+  const record = body as Record<string, unknown>;
+  if (typeof record.etag === 'string') return record.etag;
+  const invitation = record.invitation;
+  if (!invitation || typeof invitation !== 'object') return null;
+  const nested = invitation as Record<string, unknown>;
+  if (typeof nested.etag === 'string') return nested.etag;
+  if (typeof nested.updatedAt === 'string') return nested.updatedAt;
+  return null;
 }
 
 async function readJson(c: { req: { text: () => Promise<string> } }): Promise<unknown> {

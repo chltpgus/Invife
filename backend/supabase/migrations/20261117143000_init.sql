@@ -217,6 +217,14 @@ create table public.invitation_photos (
   height int,
   focal_x real not null default 0.5 check (focal_x >= 0 and focal_x <= 1),
   focal_y real not null default 0.4 check (focal_y >= 0 and focal_y <= 1),
+  crop_x real not null default 0,
+  crop_y real not null default 0,
+  crop_w real not null default 1,
+  crop_h real not null default 1,
+  color_filter text not null default 'original' check (color_filter in ('original', 'warm', 'mono')),
+  check (crop_x >= 0 and crop_y >= 0 and crop_w > 0 and crop_h > 0),
+  check (crop_x <= 1 and crop_y <= 1 and crop_w <= 1 and crop_h <= 1),
+  check (crop_x + crop_w <= 1.001 and crop_y + crop_h <= 1.001),
   low_quality boolean not null default false,
   lqip text,
   filter_applied text check (filter_applied is null or filter_applied in ('original', 'warm', 'mono')),
@@ -435,7 +443,7 @@ grant update (
 
 grant select, insert, update, delete on public.invitation_families to authenticated;
 grant select, delete on public.invitation_photos to authenticated;
-grant update (sort, focal_x, focal_y) on public.invitation_photos to authenticated;
+grant update (sort, focal_x, focal_y, crop_x, crop_y, crop_w, crop_h, color_filter) on public.invitation_photos to authenticated;
 grant select, insert, update, delete on public.invitation_accounts to authenticated;
 grant select on public.recipients to authenticated;
 grant select on public.rsvp_responses to authenticated;
@@ -831,6 +839,12 @@ begin
   end if;
   if char_length(btrim(inv.bride_name)) < 2 then
     raise exception 'bride.name' using errcode = '23514';
+  end if;
+  if char_length(btrim(inv.groom_given_name)) < 1 then
+    raise exception 'groom.givenName' using errcode = '23514';
+  end if;
+  if char_length(btrim(inv.bride_given_name)) < 1 then
+    raise exception 'bride.givenName' using errcode = '23514';
   end if;
   if inv.ceremony_date is null then
     raise exception 'ceremony.date' using errcode = '23514';
@@ -1422,15 +1436,49 @@ begin
 end
 $$;
 
+create or replace function public.mark_photo_processing(p_photo_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_count int;
+begin
+  if auth.uid() is null then
+    raise exception 'unauthorized' using errcode = '42501';
+  end if;
+  update public.invitation_photos ph
+  set status = 'processing'
+  where ph.id = p_photo_id
+    and ph.status in ('pending', 'ready', 'failed', 'processing')
+    and exists (
+      select 1 from public.invitations i
+      where i.id = ph.invitation_id and i.owner_id = auth.uid() and i.status <> 'deleted'
+    );
+  get diagnostics v_count = row_count;
+  if v_count = 0 then
+    raise exception 'not_found' using errcode = 'P0002';
+  end if;
+end
+$$;
+
 create or replace function private.storage_keys_for_retry()
-returns table (invitation_id uuid, photo_id uuid, photo_filter text)
+returns table (
+  invitation_id uuid,
+  photo_id uuid,
+  photo_filter text,
+  crop_x real,
+  crop_y real,
+  crop_w real,
+  crop_h real
+)
 language sql
 security definer
 set search_path = public
 as $$
-  select ph.invitation_id, ph.id, i.photo_filter
+  select ph.invitation_id, ph.id, ph.color_filter, ph.crop_x, ph.crop_y, ph.crop_w, ph.crop_h
   from public.invitation_photos ph
-  join public.invitations i on i.id = ph.invitation_id
   where ph.status in ('processing', 'failed')
     and ph.created_at < now() - interval '2 minutes'
 $$;
@@ -1514,11 +1562,11 @@ begin
   end if;
   update public.invitation_photos ph
   set status = p_status,
-      width = p_width,
-      height = p_height,
-      low_quality = p_low_quality,
-      lqip = p_lqip,
-      filter_applied = p_filter,
+      width = coalesce(p_width, width),
+      height = coalesce(p_height, height),
+      low_quality = coalesce(p_low_quality, low_quality),
+      lqip = coalesce(p_lqip, lqip),
+      filter_applied = coalesce(p_filter, filter_applied),
       upload_token_hash = null,
       upload_expires_at = null
   where ph.id = p_photo_id
@@ -1564,6 +1612,7 @@ grant execute on function public.revoke_recipient(uuid) to authenticated;
 grant execute on function public.reissue_recipient(uuid, bytea) to authenticated;
 grant execute on function public.prepare_photo(uuid, text, int, bytea, timestamptz) to authenticated;
 grant execute on function public.finish_photo(uuid, int, int, boolean, text, text, text) to authenticated;
+grant execute on function public.mark_photo_processing(uuid) to authenticated;
 grant execute on function public.run_retention(timestamptz) to invife_app;
 
 grant execute on all functions in schema private to invife_app;

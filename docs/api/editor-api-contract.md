@@ -20,6 +20,8 @@
 
 익명 로그인으로 만든 사용자도 JWT 역할은 `authenticated` 다. 익명 여부는 `is_anonymous` 클레임으로만 가른다. 어드민은 `app_metadata.role = 'admin'` 만 본다. `user_metadata` 는 사용자가 바꿀 수 있으므로 권한에 쓰지 않는다.
 
+초대장 한 건을 읽거나 쓰면 응답 헤더 `ETag: "<etag>"` 와 본문 `etag`(ISO 시각, `updatedAt` 과 같은 값)를 같이 준다. 목록의 각 항목도 `etag` 를 가진다. 409 도 헤더와 본문 `etag`·`invitation` 을 준다. 다음 자동 저장의 `If-Match` 는 가장 최근에 받은 `etag` 다. 따옴표 있는 헤더 값과 본문의 맨 시각 둘 다 받는다.
+
 오류 본문:
 
 ```ts
@@ -40,7 +42,7 @@ type ApiError = {
 | 403 | `forbidden` | 소유자가 아님, 익명이 발행·명단을 시도 |
 | 403 | `claim_invalid` | 이전 티켓이 없거나 만료·사용됨 |
 | 404 | `not_found` | 없는 초대장, 남의 초대장(존재 여부를 숨김) |
-| 409 | `conflict` | `If-Match` 의 `updatedAt` 이 서버보다 낡음 |
+| 409 | `conflict` | 자동 저장 `If-Match` 가 서버의 현재 `etag` 와 다름. 본문에 현재 `invitation` 과 `etag` |
 | 429 | `rate_limited` | `Retry-After` 초. 본문 `retryAfter` 도 같음 |
 | 503 | `unavailable` | DB 장애 |
 | 503 | `spend_cap` | 지출 상한. 사진 업로드·초안 생성만 막는다. RSVP 는 막지 않는다 |
@@ -141,6 +143,7 @@ type EditorInvitation = {
   purgeAt: string | null;          // 예식일 + 30일, KST 자정. 날짜 없으면 null
   createdAt: string;
   updatedAt: string;
+  etag: string;
   publishedAt: string | null;
 };
 
@@ -173,6 +176,8 @@ type EditorPhoto = {
   width: number | null;
   height: number | null;
   focal: { x: number; y: number };
+  crop: { x: number; y: number; width: number; height: number }; // 원본 대비 0–1
+  filter: PhotoFilter;
   lowQuality: boolean;
   src: { w800: string; w1200: string; w1600: string; thumb: string } | null;
   lqip: string | null;
@@ -181,7 +186,7 @@ type EditorPhoto = {
 
 빈 문자열은 「아직 없음」이다. 하객 화면에서는 비어 있는 선택 블록을 숨긴다. 공개 `Invitation` 에는 빈 값을 넣지 않는다(하객 계약 2절).
 
-`givenName` 을 비운 채 발행하면 서버가 이름에서 첫 글자를 뺀 값으로 채운다. 복성·외자 오류를 피하려면 프론트가 서명용 칸을 따로 보내는 편이 낫다(editor-spec Q7).
+`givenName` 은 비어 있으면 빈 채로 둔다. 서버가 이름의 첫 글자를 떼어 채우지 않는다. 복성(남궁, 제갈)에서 깨지고, 미리보기와 발행 결과가 달라지기 때문이다. 발행 때 비어 있으면 `400 validation`, `field: "groom.givenName"` 또는 `"bride.givenName"`, `reason: "required"`. 제안 값은 에디터에서 사용자가 확인한 뒤에만 보낸다.
 
 ## 5. 만들기 · 자동 저장 · 발행
 
@@ -221,6 +226,7 @@ type EditorInvitationSummary = {
   hasUnpublishedChanges: boolean;
   purgeAt: string | null;
   updatedAt: string;
+  etag: string;
 };
 ```
 
@@ -234,7 +240,7 @@ type EditorInvitationSummary = {
 
 `PATCH /v1/editor/invitations/:id`
 
-보낸 필드만 바꾼다. 없는 필드는 유지다. `families`, `accounts`를 보내면 그 배열은 **통째로 교체**다. `photos`는 나열한 id의 `sort`와 `focal`만 바꾼다. 목록에서 뺀 사진은 지우지 않는다. 삭제는 `DELETE .../photos/:photoId`다.
+보낸 필드만 바꾼다. 없는 필드는 유지다. `families`, `accounts`를 보내면 그 배열은 **통째로 교체**다. `photos`는 나열한 id의 `sort`, `focal`, `crop`, `filter`만 바꾼다. 목록에서 뺀 사진은 지우지 않는다. 삭제는 `DELETE .../photos/:photoId`다. `crop` 이나 `filter` 가 바뀌고 이미 변종이 있으면 그 사진만 `processing` 으로 돌아가 다시 만든다. 새 파일이 나오기 전까지 `src` 는 이전 변종을 가리킨다.
 
 ```ts
 type AutosaveBody = {
@@ -264,14 +270,18 @@ type AutosaveBody = {
     bank: string;
     number: string;
   }>;
-  photos?: Array<{ id: string; sort: number; focal?: { x: number; y: number } }>;
+  photos?: Array<{
+    id: string;
+    sort: number;
+    focal?: { x: number; y: number };
+    crop?: { x: number; y: number; width: number; height: number };
+    filter?: PhotoFilter;
+  }>;
   rsvp?: { deadline?: string | null };   // null 이면 덮어쓰기 해제(예식 전날로 계산)
 };
 ```
 
-낙관적 잠금(선택): `If-Match: "<updatedAt>"`. 어긋나면 `409 conflict`. 헤더가 없으면 마지막 저장이 이긴다. 저장 성공의 `updatedAt` 을 다음 요청에 쓴다.
-
-`200` `{ "invitation": EditorInvitation }`.
+자동 저장은 `If-Match` 가 필수다. 없으면 `400 validation`, `field: "if-match"`, `reason: "required"`. 값이 현재 `etag` 와 다르면 `409 conflict`. 성공은 `200` `{ "invitation": EditorInvitation }` 이고 헤더 `ETag` 가 새 값이다.
 
 자동 저장은 **작업 중인 문서**만 바꾼다. 이미 발행된 초대장이라도 하객이 보는 스냅샷(`published_document`)은 바뀌지 않는다. `hasUnpublishedChanges` 가 true 가 된다. 하객 화면은 「변경 사항 반영」(`apply`) 또는 첫 발행 때만 바뀐다. 디바운스 800ms·최대 5초·blur 즉시 저장은 프론트 규칙이다(editor-spec 7장).
 
@@ -283,7 +293,7 @@ type AutosaveBody = {
 |---|---|
 | 신랑·신부 이름 | 0–10자. 발행 때는 2–10 |
 | givenName | 0–10자 |
-| 전화 | 비거나, 숫자와 `-` 만, 숫자 8–15개 |
+| 전화 | 자동 저장은 0–20자(작성 중 `010` 같은 미완성 허용). 발행 때는 비거나, 숫자와 `-` 만, 숫자 8–15개 |
 | 예식장 | 0–30자 |
 | 홀 | 0–20자 |
 | 주소·상세 | 주소 0–120, 상세 0–40 |
@@ -291,8 +301,10 @@ type AutosaveBody = {
 | 교통 각 칸 | 0–100자 |
 | 계좌 안내 | 0–80자 |
 | 혼주 이름 | 0–10, 관계 0–6 |
-| 계좌 | 측마다 최대 3. 예금주 0–20, 번호는 숫자·`-` 와 숫자 8–20개 |
+| 계좌 | 자동 저장은 측마다 최대 3, 길이만 본다. 발행 때는 한 칸이라도 채웠으면 관계·예금주 2자 이상·은행·번호(숫자·`-`, 숫자 8–20)가 모두 있어야 한다 |
 | 초점 | 0–1. 기본 (0.5, 0.4) |
+| 크롭 | `x`,`y`,`width`,`height` 는 원본 비율 0–1. `width`·`height` 는 0보다 크고, 시작+크기는 1을 넘지 않는다. 기본은 전체 `{0,0,1,1}` |
+| 사진 필터 | `original` · `warm` · `mono`. 사진마다. 초대장 `photoFilter` 를 바꾸면 아직 개별 필터를 같이 안 보낸 사진에 일괄 적용되고, 변종이 있는 사진은 다시 만든다 |
 | 마감 덮어쓰기 | 예식 시작(날짜+시간, KST)보다 늦으면 `validation` |
 | 고인 | `deceased` 인데 `deceasedStyle` 이 없으면 발행 때 `validation`. 자동 저장은 허용(체크 직후 라디오 전) |
 | 사진 장 수 | 메타 배열도 최대 10 |
@@ -301,7 +313,7 @@ type AutosaveBody = {
 
 ### 5.4 발행 · 반영 · 발행 취소 · 삭제
 
-발행 필수: 신랑·신부 이름, 날짜, 시간, 예식장, 주소, 대표 사진 1장이 `ready`. 고인이면 표기 방식. 계좌는 한 칸이라도 채웠으면 관계·예금주·은행·번호를 모두.
+발행 필수: 신랑·신부 이름, 신랑·신부 `givenName`(1자 이상, 자동 채움 없음), 날짜, 시간, 예식장, 주소, 대표 사진 1장이 `ready`. 고인이면 표기 방식. 전화·혼주 전화·계좌는 이 시점에 형식을 검사한다. 오류는 `field` 에 `groom.givenName`, `groom.phone`, `accounts.number` 처럼 점 경로를 담는다.
 
 `POST /v1/editor/invitations/:id/publish`
 
@@ -354,19 +366,28 @@ R2 가 설정돼 있으면 `uploadUrl` 은 버킷 PUT 서명 URL 이다. 없으�
 
 ### 6.2 변환
 
-`POST /v1/editor/invitations/:id/photos/:photoId/complete` → `200` `{ "photo": EditorPhoto }`
+`POST /v1/editor/invitations/:id/photos/:photoId/complete` 는 변환이 끝날 때까지 기다리지 않는다. 원본이 있으면 상태를 `processing` 으로 두고 **`202`** `{ "photo": EditorPhoto, "etag": string }` 을 바로 돌려준다. 이미 `ready` 거나 변환 중이면 같은 본문으로 `200` 이다. 10장을 한 요청에 붙잡지 않기 위해서다.
 
-서버 파이프라인(`backend/src/photos/process.ts`, complete 요청 안에서 동기 실행):
+상태 조회:
 
-1. EXIF 방향으로 돌리고 위치 등 메타데이터를 제거한다.
-2. 색감 필터를 입힌다. `original` 그대로, `warm` 은 따뜻한 톤, `mono` 는 흑백. 초대장의 `photoFilter` 를 10장에 같이 쓴다.
+- `GET /v1/editor/invitations/:id/photos` → `{ "etag", "photos": EditorPhoto[] }`
+- `GET /v1/editor/invitations/:id/photos/:photoId` → `{ "etag", "photo": EditorPhoto }`
+
+`status` 는 `processing` | `ready` | `failed`. `ready` 이거나, 다시 만드는 중에도 이전 변종이 있으면 `src` 와 `lqip` 가 있다. 새 파일이 준비되기 전에는 그 이전 변종을 보여 준다.
+
+폴링: 업로드한 장만 1초 간격으로 위 GET 을 본다. 전부 `ready` 또는 `failed` 이면 멈춘다. 60초가 지나도 `processing` 이면 실패로 보고 다시 `complete` 할 수 있다. 응답의 `etag` 를 다음 자동 저장 `If-Match` 에 쓴다. 변환이 끝나면 초대장 `etag` 가 바뀐다.
+
+서버 파이프라인(`backend/src/photos/process.ts`)은 응답을 보낸 뒤 같은 프로세스에서 돈다. 프로세스가 죽으면 `npm run job:photos` 가 2분이 넘은 `processing|failed` 를 마스터로 다시 만든다.
+
+1. EXIF 방향으로 돌리고 위치 등 메타데이터를 제거한다. 필터·크롭 전의 마스터를 `master.webp` 로 남긴다.
+2. `crop`(0–1)으로 자른 뒤 색감 필터를 입힌다. `original` 그대로, `warm` 은 따뜻한 톤, `mono` 는 흑백. 필터는 사진마다다.
 3. WebP 를 만든다. 너비 800, 1200, 1600(원본보다 키우지 않음), 썸네일 너비 400, LQIP(아주 작은 data URL).
 4. 키는 `inv/{invitationId}/{photoId}/w800.webp` 같은 **상대 키**다. 하객 `src` 와 같다. 썸네일 키는 공개 JSON 에 넣지 않고 에디터에만 준다.
-5. 다시 만들 수 있게 메타데이터를 뺀 마스터를 `master.webp` 로 남긴다. 브라우저 원본 키는 지운다.
+5. 브라우저가 올린 원본 키는 성공 뒤에 지운다. 마스터는 다시 크롭·필터할 때 쓴다.
 
-`photoFilter` 를 바꾸면 기존 `ready` 사진을 다시 큐에 넣고, 같은 파이프라인이 변종을 다시 만든다. 별도 워커는 아직 없다. 실패한 건 `npm run job:photos` 가 `processing|failed` 를 다시 돈다. HEIC 는 서버 libvips 가 HEIF 를 열 수 있을 때만 된다. 로컬에서 안 열리면 `400 validation` + `reason: "unsupported_image"`.
+HEIC 는 서버 libvips 가 HEIF 를 열 수 있을 때만 된다. 열지 못하면 그 사진만 `failed` 가 된다.
 
-`DELETE /v1/editor/invitations/:id/photos/:photoId` → `204`. 객체 삭제는 같은 저장소 드라이버.
+`DELETE /v1/editor/invitations/:id/photos/:photoId` → `204`. 객체 삭제는 같은 저장소 드라이버. 자동 저장 목록에서 빼는 것으로는 지우지 않는다.
 
 ## 7. 받는 사람 · 집계
 
@@ -487,7 +508,7 @@ type PublicRsvpRow = {
 
 - 마감은 `rsvp_deadline_override` 가 없으면 예식 **전날 23:59:59.999 KST**. 그 시각은 포함하고 다음 밀리초부터 닫는다. 판단은 서버 `now()` 만.
 - 개인 링크는 토큰 upsert. 공용(`invite`, `rsvp_link`)은 첫 성공에 `editKey` 를 한 번 준다. DB 에는 해시만.
-- 유효한 개인 링크에는 Turnstile 이 없다. `invite` 와 `rsvp_link` 의 새 제출은 시크릿이 설정된 환경에서 서버가 siteverify 한다. `editKey` 가 맞는 수정은 Turnstile 을 다시 요구하지 않는다.
+- 유효한 개인 링크에는 Turnstile 이 없다. `invite` 와 `rsvp_link` 의 **첫 제출**은 시크릿이 설정된 환경에서 서버가 siteverify 한다. `responseId` 와 `editKey` 를 함께 보낸 수정은 토큰이 있어도 검사하지 않는다. 만료된 위젯 토큰이 수정을 막지 않게 하기 위해서다. 키가 틀리면 `edit_forbidden` 이다.
 - 토큰·editKey 원문은 로그에 남기지 않는다. 남기더라도 해시 앞 8자만.
 
 ## 11. 이번 구현에 없는 것
@@ -500,15 +521,19 @@ type PublicRsvpRow = {
 - 공용 RSVP 토큰 재발급, 응답 CSV, 신랑측·신부측 집계, 방명록
 - 실카카오 메일 발송(아웃박스 + 웹훅 자리만)
 
-## 12. 프론트에 묻는 것
+## 12. 프론트와 맞춘 것
 
-1. 자동 저장 `If-Match` 를 매 요청에 넣을지, 충돌 배너가 있을 때만 넣을지.
-2. 발행 후 수정은 이 초안처럼 「반영」 버튼 전까지 하객 스냅샷을 유지하는 쪽으로 확정할지.
-3. 명단 이름을 20자로 맞춘 것(위 7절)을 받아들일지.
-4. `givenName` 자동 채움(첫 글자 제거)을 쓸지, 발행 전에 프론트가 항상 보낼지.
-5. `addressDetail` 을 공개 `address` 한 줄로 합치는 방식이 맞는지.
-6. claim 티켓을 `sessionStorage`(`invife:claim-ticket`)에 두는 방식이 카카오 리다이렉트와 맞는지. 복귀 경로를 `/edit/{id}/publish` 로 봐도 되는지.
-7. `editKey` 수정에 Turnstile 을 생략하는 것(10절). 위젯은 수정 화면에도 있으므로, 토큰이 오면 검사하고 없으면 통과시킨다.
-8. 목록 카드의 `rsvp.attendingGuests` 정의(참석 응답 + 동행, 본인 포함)가 12.2 요약과 같은지.
-9. 사진 complete 가 수 초 동기 응답인 점을 업로드 UI(「변환 중…」)에 둘지. 실패 시 `photo.status = failed` 로 폴링하지 않고 complete 응답만 보면 되는지.
-10. 공개 목록 `GET /v1/invitations` 가 인증 없이 slug 배열을 주는 것(현 프론트와 동일). 빌드 키를 필수로 바꿀지는 호스팅 때 다시 본다.
+1. 자동 저장은 매번 `If-Match` 를 보낸다. 읽기·쓰기 응답은 현재 `etag` 를 헤더와 본문에 준다. 409 도 같다.
+2. 발행 후 수정은 「반영」(`apply`) 전까지 하객 스냅샷을 유지한다.
+3. 명단 이름은 1–20자다.
+4. `givenName` 은 자동으로 채우지 않는다. 비어 있으면 발행이 `groom.givenName` / `bride.givenName` `required` 로 거절한다. 제안 값은 에디터가 보여 주고 사용자가 확인한다.
+5. `addressDetail` 은 공개 `address` 한 줄에 공백으로 붙인다.
+6. claim 티켓은 `sessionStorage` 키 `invife:claim-ticket`, 복귀 경로 `/edit/{id}/publish`. 로그인 화면 연결은 프론트가 나중에 잇는다.
+7. `editKey` 가 있는 수정은 Turnstile 토큰을 무시한다. 첫 제출만 검사한다.
+8. `attendingGuests` = 참석 응답 × (1 + 동행).
+9. `complete` 는 `202` 와 `processing` 을 바로 준다. 상태는 `GET .../photos` 로 폴링한다(6.2).
+10. 공개 slug 목록은 인증 없이 배열이다.
+11. 사진 자동 저장은 `sort`, `focal`, `crop`, `filter` 를 받는다. 크롭·필터가 바뀌면 다시 만들고, 그동안 이전 변종을 준다. 목록에서 빼도 삭제되지 않는다.
+12. 자동 저장은 전화·계좌의 미완성을 받는다. 형식은 발행 때 필드 오류로 본다.
+
+사진 최대 장수, 크롭·필터, 발행 필수 항목이 editor-spec 과 글자 단위로 다른 곳은 프론트의 후속 diff 를 기다린다. 그 전까지 이 문서가 구현 기준이다.

@@ -203,7 +203,7 @@ test('없는 슬러그, 마감, 검증, 개인 링크 upsert, 공용 editKey, �
   expect(typeof shared.body.editKey).toBe('string');
 });
 
-test('Turnstile 은 공용 신규만 강제하고 수정·개인 링크는 비운다', async () => {
+test('Turnstile 은 공용 첫 제출만 검사하고 수정 토큰은 무시한다', async () => {
   const open = await seedInvitation(admin, { slug: 'turnstile1', date: '2027-06-01' });
   const app = guestApp({ turnstile: true, verify: (token) => (token === 'good' ? 'ok' : 'failed') });
   const missing = await readJson(await app.request('/functions/v1/rsvp', {
@@ -238,6 +238,7 @@ test('Turnstile 은 공용 신규만 강제하고 수정·개인 링크는 비�
       companions: 0,
       responseId: (created.body.response as { id: string }).id,
       editKey: created.body.editKey,
+      turnstileToken: 'expired-widget',
     }),
   }));
   expect(updated.status).toBe(200);

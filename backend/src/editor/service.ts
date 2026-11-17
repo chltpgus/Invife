@@ -24,13 +24,14 @@ import {
 import { HttpError, isRecord } from '../http';
 import { addUsage, assertSpendOpen, takeLimit } from '../limits';
 import type { ObjectStorage } from '../photos/storage';
-import { processImage, type PhotoFilter } from '../photos/process';
+import { processImage, type NormalizedCrop, type PhotoFilter } from '../photos/process';
 
 export type EditorDeps = {
   pool: Database;
   config: Config;
   storage: ObjectStorage;
   now: () => Date;
+  schedule?: (task: () => Promise<void>) => void;
 };
 
 const THEMES = new Set(['ivory', 'sage', 'mist']);
@@ -159,6 +160,7 @@ export async function listInvitations(deps: EditorDeps, claims: AuthClaims) {
         hasUnpublishedChanges: row.status === 'published' && row.published_revision !== row.revision,
         purgeAt: purgeAt(row.ceremony_date, flags.purgeDelayDays),
         updatedAt: iso(row.updated_at),
+        etag: iso(row.updated_at),
       })),
     };
   });
@@ -169,36 +171,25 @@ export async function getInvitation(deps: EditorDeps, claims: AuthClaims, id: st
 }
 
 export async function autosave(deps: EditorDeps, claims: AuthClaims, id: string, body: unknown, ifMatch: string | undefined) {
+  if (!ifMatch) throw new HttpError(400, 'validation', { field: 'if-match', reason: 'required' });
   const patch = parseAutosave(body);
-  const filterChanged = await withUser(deps.pool, claims, async (client) => {
+  const jobs = await withUser(deps.pool, claims, async (client) => {
     const current = await loadRow(client, id);
-    if (ifMatch && !sameInstant(ifMatch, iso(current.updatedAt))) {
+    if (!sameInstant(etagValue(ifMatch), iso(current.updatedAt))) {
       throw new HttpError(409, 'conflict', { invitation: await present(client, deps, current) });
     }
-    if (!patch) return false;
-    await applyPatch(client, current, patch);
-    return patch.photoFilter !== undefined && patch.photoFilter !== current.photoFilter;
+    if (!patch) return [];
+    return applyPatch(client, current, patch);
   });
-  if (filterChanged && patch?.photoFilter) await reprocess(deps, claims, id, patch.photoFilter);
+  for (const job of jobs) scheduleRender(deps, claims, id, job.photoId, job.filter, job.crop, 'master.webp');
   return getInvitation(deps, claims, id);
 }
 
 export async function publish(deps: EditorDeps, claims: AuthClaims, id: string) {
   if (claims.isAnonymous) throw new HttpError(403, 'forbidden', { reason: 'login_required' });
   await withUser(deps.pool, claims, async (client) => {
-    await client.query(
-      `update invitations set
-         groom_given_name = case
-           when groom_given_name = '' and char_length(groom_name) >= 2 then substring(groom_name from 2)
-           else groom_given_name end,
-         bride_given_name = case
-           when bride_given_name = '' and char_length(bride_name) >= 2 then substring(bride_name from 2)
-           else bride_given_name end
-       where id = $1`,
-      [id],
-    );
     const row = await loadRow(client, id);
-    assertAccountsComplete(row.accounts);
+    assertReadyToPublish(row);
     const deadline = await deadlineOf(client, row);
     if (!deadline) throw new HttpError(400, 'validation', { field: 'ceremony.date', reason: 'required' });
     const document = buildPublicInvitation(toWorking(row), deadline);
@@ -212,7 +203,7 @@ export async function applyChanges(deps: EditorDeps, claims: AuthClaims, id: str
   if (claims.isAnonymous) throw new HttpError(403, 'forbidden', { reason: 'login_required' });
   await withUser(deps.pool, claims, async (client) => {
     const row = await loadRow(client, id);
-    assertAccountsComplete(row.accounts);
+    assertReadyToPublish(row);
     const deadline = await deadlineOf(client, row);
     if (!deadline) throw new HttpError(400, 'validation', { field: 'ceremony.date', reason: 'required' });
     const document = buildPublicInvitation(toWorking(row), deadline);
@@ -305,26 +296,50 @@ export async function saveUpload(deps: EditorDeps, uploadToken: string, body: Bu
 }
 
 export async function completePhoto(deps: EditorDeps, claims: AuthClaims, invitationId: string, photoId: string) {
-  const meta = await withUser(deps.pool, claims, async (client) => {
-    const result = await client.query<{ status: string; photo_filter: PhotoFilter }>(
-      `select ph.status, i.photo_filter
-       from invitation_photos ph
-       join invitations i on i.id = ph.invitation_id
-       where ph.id = $1 and ph.invitation_id = $2`,
-      [photoId, invitationId],
-    );
-    return result.rows[0] ?? null;
+  const queued = await withUser(deps.pool, claims, async (client) => {
+    const row = await loadRow(client, invitationId);
+    const photo = row.photos.find((item) => item.id === photoId);
+    if (!photo) throw new HttpError(404, 'not_found');
+    if (photo.status === 'ready' || photo.status === 'processing') {
+      return { photo: presentPhoto(invitationId, photo), etag: iso(row.updatedAt), start: false };
+    }
+    if (photo.status !== 'pending' && photo.status !== 'failed') {
+      throw new HttpError(400, 'validation', { field: 'photo', reason: 'invalid' });
+    }
+    await client.query('select public.mark_photo_processing($1)', [photoId]);
+    const next = await loadRow(client, invitationId);
+    const marked = next.photos.find((item) => item.id === photoId);
+    if (!marked) throw new HttpError(404, 'not_found');
+    return {
+      photo: presentPhoto(invitationId, marked),
+      etag: iso(next.updatedAt),
+      start: true,
+      filter: marked.filter,
+      crop: cropOf(marked),
+    };
   });
-  if (!meta) throw new HttpError(404, 'not_found');
-  if (meta.status !== 'pending' && meta.status !== 'failed') {
-    throw new HttpError(400, 'validation', { field: 'photo', reason: 'invalid' });
+  if (queued.start && queued.filter && queued.crop) {
+    scheduleRender(deps, claims, invitationId, photoId, queued.filter, queued.crop, 'original');
   }
-  await renderPhoto(deps, claims, invitationId, photoId, meta.photo_filter, 'original');
+  return { photo: queued.photo, etag: queued.etag };
+}
+
+export async function listPhotos(deps: EditorDeps, claims: AuthClaims, invitationId: string) {
+  return withUser(deps.pool, claims, async (client) => {
+    const row = await loadRow(client, invitationId);
+    return {
+      etag: iso(row.updatedAt),
+      photos: [...row.photos].sort((a, b) => a.sort - b.sort).map((photo) => presentPhoto(invitationId, photo)),
+    };
+  });
+}
+
+export async function getPhoto(deps: EditorDeps, claims: AuthClaims, invitationId: string, photoId: string) {
   return withUser(deps.pool, claims, async (client) => {
     const row = await loadRow(client, invitationId);
     const photo = row.photos.find((item) => item.id === photoId);
     if (!photo) throw new HttpError(404, 'not_found');
-    return { photo: presentPhoto(invitationId, photo) };
+    return { etag: iso(row.updatedAt), photo: presentPhoto(invitationId, photo) };
   });
 }
 
@@ -518,6 +533,7 @@ export async function rsvpDashboard(deps: EditorDeps, claims: AuthClaims, invita
           : guestPath(row.slug, linkToken(deps.config.linkSecret, recipientMaterial(item.id, item.token_version))),
       })),
       byPublicLink: { invite: toPublic('invite'), rsvpLink: toPublic('rsvp_link') },
+      etag: iso(row.updatedAt),
     };
   });
 }
@@ -538,31 +554,48 @@ export async function getPublicInvitation(pool: Database, slug: string) {
   });
 }
 
+function scheduleRender(
+  deps: EditorDeps,
+  claims: AuthClaims,
+  invitationId: string,
+  photoId: string,
+  filter: PhotoFilter,
+  crop: NormalizedCrop,
+  sourceName: 'original' | 'master.webp',
+) {
+  const run = () => renderPhoto(deps, claims, invitationId, photoId, filter, crop, sourceName);
+  const schedule = deps.schedule ?? ((task) => setImmediate(() => void task().catch(() => undefined)));
+  schedule(run);
+}
+
 async function renderPhoto(
   deps: EditorDeps,
   claims: AuthClaims,
   invitationId: string,
   photoId: string,
   filter: PhotoFilter,
+  crop: NormalizedCrop,
   sourceName: 'original' | 'master.webp',
 ) {
   const source = await deps.storage.get(photoKey(invitationId, photoId, sourceName));
   if (!source) {
     await withUser(deps.pool, claims, (client) =>
-      client.query('select public.finish_photo($1, null, null, false, null, $2, $3)', [photoId, filter, 'failed']),
+      client.query('select public.finish_photo($1, null, null, null, null, $2, $3)', [photoId, filter, 'failed']),
     );
-    throw new HttpError(400, 'validation', { field: 'photo', reason: 'upload_missing' });
+    return;
   }
   let processed;
   try {
-    processed = await processImage(source, filter);
+    processed = await processImage(source, filter, crop);
   } catch {
     await withUser(deps.pool, claims, (client) =>
-      client.query('select public.finish_photo($1, null, null, false, null, $2, $3)', [photoId, filter, 'failed']),
+      client.query('select public.finish_photo($1, null, null, null, null, $2, $3)', [photoId, filter, 'failed']),
     );
-    throw new HttpError(400, 'validation', { field: 'photo', reason: 'unsupported_image' });
+    return;
   }
-  await deps.storage.put(photoKey(invitationId, photoId, 'master.webp'), processed.master, 'image/webp');
+  if (sourceName === 'original') {
+    await deps.storage.put(photoKey(invitationId, photoId, 'master.webp'), processed.master, 'image/webp');
+  }
   await deps.storage.put(photoKey(invitationId, photoId, 'w800.webp'), processed.w800, 'image/webp');
   await deps.storage.put(photoKey(invitationId, photoId, 'w1200.webp'), processed.w1200, 'image/webp');
   await deps.storage.put(photoKey(invitationId, photoId, 'w1600.webp'), processed.w1600, 'image/webp');
@@ -579,32 +612,7 @@ async function renderPhoto(
     ]);
     await client.query('update invitations set revision = revision + 1 where id = $1', [invitationId]);
   });
-  await deps.storage.delete(photoKey(invitationId, photoId, 'original'));
-}
-
-async function reprocess(deps: EditorDeps, claims: AuthClaims, invitationId: string, filter: PhotoFilter) {
-  const photos = await withUser(deps.pool, claims, async (client) => (await loadRow(client, invitationId)).photos);
-  for (const photo of photos) {
-    if (photo.status !== 'ready' && photo.status !== 'failed') continue;
-    const master = await deps.storage.get(photoKey(invitationId, photo.id, 'master.webp'));
-    if (!master) continue;
-    const processed = await processImage(master, filter);
-    await deps.storage.put(photoKey(invitationId, photo.id, 'w800.webp'), processed.w800, 'image/webp');
-    await deps.storage.put(photoKey(invitationId, photo.id, 'w1200.webp'), processed.w1200, 'image/webp');
-    await deps.storage.put(photoKey(invitationId, photo.id, 'w1600.webp'), processed.w1600, 'image/webp');
-    await deps.storage.put(photoKey(invitationId, photo.id, 'thumb.webp'), processed.thumb, 'image/webp');
-    await withUser(deps.pool, claims, (client) =>
-      client.query('select public.finish_photo($1, $2, $3, $4, $5, $6, $7)', [
-        photo.id,
-        processed.width,
-        processed.height,
-        processed.lowQuality,
-        processed.lqip,
-        filter,
-        'ready',
-      ]),
-    );
-  }
+  if (sourceName === 'original') await deps.storage.delete(photoKey(invitationId, photoId, 'original'));
 }
 
 async function listRecipients(deps: EditorDeps, claims: AuthClaims, invitationId: string, only?: string[]) {
@@ -648,7 +656,7 @@ async function listRecipients(deps: EditorDeps, claims: AuthClaims, invitationId
               }
             : null,
       }));
-    return { recipients };
+    return { recipients, etag: iso(row.updatedAt) };
   });
 }
 
@@ -728,12 +736,13 @@ async function present(client: DatabaseClient, deps: EditorDeps, row: Invitation
     purgeAt: purgeAt(row.ceremonyDate, flags.purgeDelayDays),
     createdAt: iso(row.createdAt),
     updatedAt: iso(row.updatedAt),
+    etag: iso(row.updatedAt),
     publishedAt: row.publishedAt ? iso(row.publishedAt) : null,
   };
 }
 
 function presentPhoto(invitationId: string, photo: PhotoRow) {
-  const ready = photo.status === 'ready' && photo.width && photo.height;
+  const servable = Boolean(photo.width && photo.height && photo.lqip);
   return {
     id: photo.id,
     sort: photo.sort,
@@ -741,8 +750,10 @@ function presentPhoto(invitationId: string, photo: PhotoRow) {
     width: photo.width,
     height: photo.height,
     focal: { x: photo.focalX, y: photo.focalY },
+    crop: { x: photo.cropX, y: photo.cropY, width: photo.cropW, height: photo.cropH },
+    filter: photo.filter,
     lowQuality: Math.min(photo.width ?? 0, photo.height ?? 0) > 0 && Math.min(photo.width ?? 0, photo.height ?? 0) < 800,
-    src: ready
+    src: servable
       ? {
           w800: photoKey(invitationId, photo.id, 'w800.webp'),
           w1200: photoKey(invitationId, photo.id, 'w1200.webp'),
@@ -777,7 +788,9 @@ function checklist(row: InvitationRow) {
   const cover = [...row.photos].sort((a, b) => a.sort - b.sort)[0];
   return [
     { field: 'groom.name', ok: codePoints(row.groomName.trim()) >= 2 },
+    { field: 'groom.givenName', ok: codePoints(row.groomGivenName.trim()) >= 1 },
     { field: 'bride.name', ok: codePoints(row.brideName.trim()) >= 2 },
+    { field: 'bride.givenName', ok: codePoints(row.brideGivenName.trim()) >= 1 },
     { field: 'ceremony.date', ok: Boolean(row.ceremonyDate) },
     { field: 'ceremony.time', ok: Boolean(row.ceremonyTime) },
     { field: 'ceremony.venueName', ok: codePoints(row.venueName.trim()) >= 2 },
@@ -852,8 +865,17 @@ async function loadRow(client: DatabaseClient, id: string): Promise<InvitationRo
     height: number | null;
     focal_x: number;
     focal_y: number;
+    crop_x: number;
+    crop_y: number;
+    crop_w: number;
+    crop_h: number;
+    color_filter: PhotoFilter;
     lqip: string | null;
-  }>('select id, sort, status, width, height, focal_x, focal_y, lqip from invitation_photos where invitation_id = $1', [id]);
+  }>(
+    `select id, sort, status, width, height, focal_x, focal_y, crop_x, crop_y, crop_w, crop_h, color_filter, lqip
+     from invitation_photos where invitation_id = $1`,
+    [id],
+  );
   const accounts = await client.query<{
     id: string;
     side: 'groom' | 'bride';
@@ -915,6 +937,11 @@ async function loadRow(client: DatabaseClient, id: string): Promise<InvitationRo
       height: item.height,
       focalX: item.focal_x,
       focalY: item.focal_y,
+      cropX: item.crop_x,
+      cropY: item.crop_y,
+      cropW: item.crop_w,
+      cropH: item.crop_h,
+      filter: item.color_filter,
       lqip: item.lqip,
     })),
     accounts: accounts.rows.map((item) => ({
@@ -949,7 +976,13 @@ type Patch = {
   transport?: { parking?: string; subway?: string; bus?: string; other?: string };
   accountsNote?: string;
   accounts?: AccountInput[];
-  photos?: { id: string; sort: number; focal?: { x: number; y: number } }[];
+  photos?: {
+    id: string;
+    sort: number;
+    focal?: { x: number; y: number };
+    crop?: NormalizedCrop;
+    filter?: PhotoFilter;
+  }[];
   rsvp?: { deadline?: string | null };
 };
 
@@ -957,7 +990,9 @@ type FamilyInput = { relation: string; father: ParentInput; mother: ParentInput 
 type ParentInput = { name: string; phone: string; deceased: boolean; deceasedStyle: 'hanja' | 'hangul' | null };
 type AccountInput = { id?: string; side: 'groom' | 'bride'; relation: string; holder: string; bank: string; number: string };
 
-async function applyPatch(client: DatabaseClient, row: InvitationRow, patch: Patch) {
+type RenderJob = { photoId: string; filter: PhotoFilter; crop: NormalizedCrop };
+
+async function applyPatch(client: DatabaseClient, row: InvitationRow, patch: Patch): Promise<RenderJob[]> {
   const sets: string[] = [];
   const values: unknown[] = [];
   const set = (column: string, value: unknown) => {
@@ -1023,15 +1058,58 @@ async function applyPatch(client: DatabaseClient, row: InvitationRow, patch: Pat
       );
     }
   }
+  const jobs = new Map<string, RenderJob>();
+  if (patch.photoFilter && patch.photoFilter !== row.photoFilter) {
+    await client.query('update invitation_photos set color_filter = $1 where invitation_id = $2', [patch.photoFilter, row.id]);
+    for (const photo of row.photos) {
+      if (!canReprocess(photo)) continue;
+      jobs.set(photo.id, { photoId: photo.id, filter: patch.photoFilter, crop: cropOf(photo) });
+    }
+  }
   if (patch.photos) {
     for (const photo of patch.photos) {
+      const previous = row.photos.find((item) => item.id === photo.id);
       const updated = await client.query(
-        `update invitation_photos set sort = $1, focal_x = coalesce($2, focal_x), focal_y = coalesce($3, focal_y)
-         where id = $4 and invitation_id = $5`,
-        [photo.sort, photo.focal?.x ?? null, photo.focal?.y ?? null, photo.id, row.id],
+        `update invitation_photos set
+           sort = $1,
+           focal_x = coalesce($2, focal_x),
+           focal_y = coalesce($3, focal_y),
+           crop_x = coalesce($4, crop_x),
+           crop_y = coalesce($5, crop_y),
+           crop_w = coalesce($6, crop_w),
+           crop_h = coalesce($7, crop_h),
+           color_filter = coalesce($8, color_filter)
+         where id = $9 and invitation_id = $10`,
+        [
+          photo.sort,
+          photo.focal?.x ?? null,
+          photo.focal?.y ?? null,
+          photo.crop?.x ?? null,
+          photo.crop?.y ?? null,
+          photo.crop?.width ?? null,
+          photo.crop?.height ?? null,
+          photo.filter ?? null,
+          photo.id,
+          row.id,
+        ],
       );
       if (updated.rowCount !== 1) throw new HttpError(400, 'validation', { field: 'photos', reason: 'invalid' });
+      if (!previous || !canReprocess(previous)) continue;
+      const nextFilter = photo.filter ?? patch.photoFilter ?? previous.filter;
+      const nextCrop = photo.crop ?? cropOf(previous);
+      const changed =
+        (photo.filter !== undefined && photo.filter !== previous.filter) ||
+        (photo.crop !== undefined && !sameCrop(photo.crop, cropOf(previous))) ||
+        (patch.photoFilter !== undefined && patch.photoFilter !== previous.filter);
+      if (!changed) {
+        jobs.delete(photo.id);
+        continue;
+      }
+      jobs.set(photo.id, { photoId: photo.id, filter: nextFilter, crop: nextCrop });
     }
+  }
+  for (const job of jobs.values()) {
+    await client.query('select public.mark_photo_processing($1)', [job.photoId]);
   }
   const nextDate = patch.ceremony?.date !== undefined ? patch.ceremony.date : row.ceremonyDate;
   const nextTime = patch.ceremony?.time !== undefined ? patch.ceremony.time : row.ceremonyTime;
@@ -1046,16 +1124,52 @@ async function applyPatch(client: DatabaseClient, row: InvitationRow, patch: Pat
       throw new HttpError(400, 'validation', { field: 'rsvp.deadline', reason: 'deadline_after_ceremony' });
     }
   }
+  return [...jobs.values()];
 }
 
 function assertAccountsComplete(accounts: AccountRow[]) {
   for (const account of accounts) {
     const any = account.relation.trim() || account.holder.trim() || account.bank.trim() || account.number.trim();
     if (!any) continue;
+    if (account.number.trim() && !accountNumberOk(account.number)) {
+      throw new HttpError(400, 'validation', { field: 'accounts.number', reason: 'invalid' });
+    }
     if (codePoints(account.holder.trim()) < 2 || !account.bank.trim() || !accountNumberOk(account.number)) {
       throw new HttpError(400, 'validation', { field: 'accounts', reason: 'incomplete' });
     }
   }
+}
+
+function assertReadyToPublish(row: InvitationRow) {
+  if (!row.groomGivenName.trim()) throw new HttpError(400, 'validation', { field: 'groom.givenName', reason: 'required' });
+  if (!row.brideGivenName.trim()) throw new HttpError(400, 'validation', { field: 'bride.givenName', reason: 'required' });
+  if (row.groomPhone && !phoneOk(row.groomPhone)) throw new HttpError(400, 'validation', { field: 'groom.phone', reason: 'invalid' });
+  if (row.bridePhone && !phoneOk(row.bridePhone)) throw new HttpError(400, 'validation', { field: 'bride.phone', reason: 'invalid' });
+  for (const parent of row.families) {
+    if (parent.phone && !phoneOk(parent.phone)) {
+      throw new HttpError(400, 'validation', { field: `families.${parent.side}.${parent.role}.phone`, reason: 'invalid' });
+    }
+  }
+  assertAccountsComplete(row.accounts);
+}
+
+function canReprocess(photo: PhotoRow): boolean {
+  return photo.status === 'ready' || photo.status === 'failed' || photo.status === 'processing';
+}
+
+function cropOf(photo: PhotoRow): NormalizedCrop {
+  return { x: photo.cropX, y: photo.cropY, width: photo.cropW, height: photo.cropH };
+}
+
+function sameCrop(left: NormalizedCrop, right: NormalizedCrop): boolean {
+  return left.x === right.x && left.y === right.y && left.width === right.width && left.height === right.height;
+}
+
+function etagValue(header: string): string {
+  const trimmed = header.trim();
+  const weak = trimmed.startsWith('W/') ? trimmed.slice(2).trim() : trimmed;
+  if (weak.startsWith('"') && weak.endsWith('"') && weak.length >= 2) return weak.slice(1, -1);
+  return weak;
 }
 
 function parseCreate(body: unknown) {
@@ -1104,11 +1218,7 @@ function personPatch(value: unknown, field: string) {
   const patch: { name?: string; givenName?: string; phone?: string } = {};
   if (value.name !== undefined) patch.name = bounded(value.name, `${field}.name`, 10);
   if (value.givenName !== undefined) patch.givenName = bounded(value.givenName, `${field}.givenName`, 10);
-  if (value.phone !== undefined) {
-    const phone = bounded(value.phone, `${field}.phone`, 20);
-    if (!phoneOk(phone)) throw new HttpError(400, 'validation', { field: `${field}.phone`, reason: 'invalid' });
-    patch.phone = phone;
-  }
+  if (value.phone !== undefined) patch.phone = bounded(value.phone, `${field}.phone`, 20);
   return patch;
 }
 
@@ -1151,7 +1261,6 @@ function parentPatch(value: unknown, field: string): ParentInput {
     deceasedStyle = value.deceasedStyle;
   }
   const phone = bounded(typeof value.phone === 'string' ? value.phone : '', `${field}.phone`, 20);
-  if (phone && !phoneOk(phone)) throw new HttpError(400, 'validation', { field: `${field}.phone`, reason: 'invalid' });
   return { name: bounded(typeof value.name === 'string' ? value.name : '', `${field}.name`, 10), phone, deceased, deceasedStyle };
 }
 
@@ -1175,9 +1284,6 @@ function accountsPatch(value: unknown): AccountInput[] {
     counts[item.side] += 1;
     if (counts[item.side] > 3) throw new HttpError(400, 'validation', { field: 'accounts', reason: 'too_many' });
     const number = bounded(typeof item.number === 'string' ? item.number : '', 'accounts.number', 24);
-    if (number && !accountNumberOk(number)) {
-      throw new HttpError(400, 'validation', { field: 'accounts.number', reason: 'invalid' });
-    }
     const id = item.id === undefined ? undefined : item.id;
     if (id !== undefined && (typeof id !== 'string' || !/^[0-9a-f-]{36}$/i.test(id))) {
       throw new HttpError(400, 'validation', { field: 'accounts.id', reason: 'invalid' });
@@ -1209,8 +1315,32 @@ function photosPatch(value: unknown): NonNullable<Patch['photos']> {
       }
       focal = { x: item.focal.x, y: item.focal.y };
     }
-    return { id: item.id, sort: item.sort, focal };
+    let crop: NormalizedCrop | undefined;
+    if (item.crop !== undefined) crop = cropPatch(item.crop);
+    let filter: PhotoFilter | undefined;
+    if (item.filter !== undefined) {
+      if (typeof item.filter !== 'string' || !FILTERS.has(item.filter)) {
+        throw new HttpError(400, 'validation', { field: 'photos.filter', reason: 'invalid' });
+      }
+      filter = item.filter as PhotoFilter;
+    }
+    return { id: item.id, sort: item.sort, focal, crop, filter };
   });
+}
+
+function cropPatch(value: unknown): NormalizedCrop {
+  if (!isRecord(value) || typeof value.x !== 'number' || typeof value.y !== 'number' || typeof value.width !== 'number' || typeof value.height !== 'number') {
+    throw new HttpError(400, 'validation', { field: 'photos.crop', reason: 'invalid' });
+  }
+  const crop = { x: value.x, y: value.y, width: value.width, height: value.height };
+  if (
+    crop.x < 0 || crop.y < 0 || crop.width <= 0 || crop.height <= 0 ||
+    crop.x > 1 || crop.y > 1 || crop.width > 1 || crop.height > 1 ||
+    crop.x + crop.width > 1.001 || crop.y + crop.height > 1.001
+  ) {
+    throw new HttpError(400, 'validation', { field: 'photos.crop', reason: 'out_of_range' });
+  }
+  return crop;
 }
 
 function rsvpPatch(value: unknown): NonNullable<Patch['rsvp']> {

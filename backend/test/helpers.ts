@@ -107,11 +107,12 @@ export function testConfig(overrides: Partial<Config> = {}): Config {
   };
 }
 
-export async function readJson(response: Response): Promise<{ status: number; body: Record<string, unknown>; retryAfter: string | null }> {
+export async function readJson(response: Response): Promise<{ status: number; body: Record<string, unknown>; retryAfter: string | null; etag: string | null }> {
   const text = await response.text();
   return {
     status: response.status,
     body: text ? (JSON.parse(text) as Record<string, unknown>) : {},
     retryAfter: response.headers.get('retry-after'),
+    etag: response.headers.get('etag'),
   };
 }

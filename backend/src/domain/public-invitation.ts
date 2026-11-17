@@ -104,6 +104,11 @@ export type PhotoRow = {
   height: number | null;
   focalX: number;
   focalY: number;
+  cropX: number;
+  cropY: number;
+  cropW: number;
+  cropH: number;
+  filter: 'original' | 'warm' | 'mono';
   lqip: string | null;
 };
 

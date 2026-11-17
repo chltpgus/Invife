@@ -120,7 +120,7 @@ async function limitSubmit(deps: GuestDeps, input: SubmitInput, ip: string) {
 
 async function assertTurnstile(deps: GuestDeps, input: SubmitInput, ip: string, editing: boolean) {
   if (!deps.config.turnstileSecret || input.channel === 'personal') return;
-  if (editing && !input.turnstileToken) return;
+  if (editing) return;
   if (!input.turnstileToken) throw new HttpError(403, 'turnstile_failed');
   const verdict = await deps.verifyTurnstile(input.turnstileToken, ip);
   if (verdict === 'unavailable') throw new HttpError(503, 'unavailable');

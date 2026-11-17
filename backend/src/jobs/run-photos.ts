@@ -8,9 +8,15 @@ const config = loadConfig();
 const pool = createPool(config.databaseUrl);
 const storage = createStorage(config);
 const rows = await withService(pool, (client) =>
-  client.query<{ invitation_id: string; photo_id: string; photo_filter: PhotoFilter }>(
-    'select * from private.storage_keys_for_retry()',
-  ),
+  client.query<{
+    invitation_id: string;
+    photo_id: string;
+    photo_filter: PhotoFilter;
+    crop_x: number;
+    crop_y: number;
+    crop_w: number;
+    crop_h: number;
+  }>('select * from private.storage_keys_for_retry()'),
 );
 
 let retried = 0;
@@ -22,7 +28,12 @@ for (const row of rows.rows) {
     );
     continue;
   }
-  const processed = await processImage(master, row.photo_filter);
+  const processed = await processImage(master, row.photo_filter, {
+    x: row.crop_x,
+    y: row.crop_y,
+    width: row.crop_w,
+    height: row.crop_h,
+  });
   await storage.put(photoKey(row.invitation_id, row.photo_id, 'w800.webp'), processed.w800, 'image/webp');
   await storage.put(photoKey(row.invitation_id, row.photo_id, 'w1200.webp'), processed.w1200, 'image/webp');
   await storage.put(photoKey(row.invitation_id, row.photo_id, 'w1600.webp'), processed.w1600, 'image/webp');

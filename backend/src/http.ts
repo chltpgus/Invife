@@ -37,9 +37,9 @@ export function mapDatabaseError(error: unknown): HttpError | null {
   if (pgError.code === 'P0002') return new HttpError(404, 'not_found');
   if (pgError.code === '28000') return new HttpError(403, 'claim_invalid');
   if (pgError.code === '23514') {
-    const reason = messageOf(pgError);
-    const field = reason.includes('.') ? reason : undefined;
-    return new HttpError(400, 'validation', { field, reason });
+    const message = messageOf(pgError);
+    if (message.includes('.')) return new HttpError(400, 'validation', { field: message, reason: 'required' });
+    return new HttpError(400, 'validation', { reason: message });
   }
   if (['08000', '08001', '08003', '08006', '57P01', '53300'].includes(pgError.code)) {
     return new HttpError(503, 'unavailable');
@@ -58,13 +58,27 @@ export function errorBody(error: HttpError): { status: number; body: Record<stri
   if (error.details.retryAfter !== undefined) payload.retryAfter = error.details.retryAfter;
   const body: Record<string, unknown> = { error: payload };
   if (error.details.invitation) body.invitation = error.details.invitation;
+  const etag = etagFrom(body);
+  if (etag) body.etag = etag;
   return { status: error.status, body, retryAfter: error.details.retryAfter };
 }
 
 export function sendError(c: Context, error: HttpError) {
   const { status, body, retryAfter } = errorBody(error);
   if (retryAfter !== undefined) c.header('Retry-After', String(retryAfter));
+  const etag = typeof body.etag === 'string' ? body.etag : null;
+  if (etag) c.header('ETag', `"${etag}"`);
   return c.json(body, status as 400);
+}
+
+function etagFrom(body: Record<string, unknown>): string | null {
+  if (typeof body.etag === 'string') return body.etag;
+  const invitation = body.invitation;
+  if (!invitation || typeof invitation !== 'object') return null;
+  const record = invitation as Record<string, unknown>;
+  if (typeof record.etag === 'string') return record.etag;
+  if (typeof record.updatedAt === 'string') return record.updatedAt;
+  return null;
 }
 
 export function clientIp(header: string | undefined): string {
