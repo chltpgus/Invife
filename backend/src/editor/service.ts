@@ -23,7 +23,7 @@ import {
 import { HttpError, isRecord } from '../http';
 import { addUsage, assertSpendOpen, takeLimit } from '../limits';
 import type { ObjectStorage } from '../photos/storage';
-import { processImage, type NormalizedCrop, type PhotoFilter } from '../photos/process';
+import { FULL_CROP, processImage, type NormalizedCrop, type PhotoFilter } from '../photos/process';
 
 export type EditorDeps = {
   pool: Database;
@@ -1069,25 +1069,26 @@ async function applyPatch(client: DatabaseClient, row: InvitationRow, patch: Pat
   if (patch.photos) {
     for (const photo of patch.photos) {
       const previous = row.photos.find((item) => item.id === photo.id);
+      const nextCrop = photo.crop ?? FULL_CROP;
       const updated = await client.query(
         `update invitation_photos set
            sort = $1,
            focal_x = coalesce($2, focal_x),
            focal_y = coalesce($3, focal_y),
-           crop_x = coalesce($4, crop_x),
-           crop_y = coalesce($5, crop_y),
-           crop_w = coalesce($6, crop_w),
-           crop_h = coalesce($7, crop_h),
+           crop_x = $4,
+           crop_y = $5,
+           crop_w = $6,
+           crop_h = $7,
            color_filter = coalesce($8, color_filter)
          where id = $9 and invitation_id = $10`,
         [
           photo.sort,
           photo.focal?.x ?? null,
           photo.focal?.y ?? null,
-          photo.crop?.x ?? null,
-          photo.crop?.y ?? null,
-          photo.crop?.width ?? null,
-          photo.crop?.height ?? null,
+          nextCrop.x,
+          nextCrop.y,
+          nextCrop.width,
+          nextCrop.height,
           photo.filter ?? null,
           photo.id,
           row.id,
@@ -1096,11 +1097,7 @@ async function applyPatch(client: DatabaseClient, row: InvitationRow, patch: Pat
       if (updated.rowCount !== 1) throw new HttpError(400, 'validation', { field: 'photos', reason: 'invalid' });
       if (!previous || !canReprocess(previous)) continue;
       const nextFilter = photo.filter ?? patch.photoFilter ?? previous.filter;
-      const nextCrop = photo.crop ?? cropOf(previous);
-      const changed =
-        (photo.filter !== undefined && photo.filter !== previous.filter) ||
-        (photo.crop !== undefined && !sameCrop(photo.crop, cropOf(previous))) ||
-        (patch.photoFilter !== undefined && patch.photoFilter !== previous.filter);
+      const changed = nextFilter !== previous.filter || !sameCrop(nextCrop, cropOf(previous));
       if (!changed) {
         jobs.delete(photo.id);
         continue;

@@ -287,6 +287,79 @@ test('사진 변환이 끝나도 etag 는 그대로이고, 그 값으로 자동 
   expect((saved.body.invitation as { etag: string }).etag).not.toBe(etag);
 });
 
+test('전체 프레임 크롭과 같은 필터는 다시 변환하지 않고, 크롭을 빼면 전체로 저장한다', async () => {
+  const host = randomUUID();
+  await insertUser(admin, host, false);
+  const token = await accessToken(host);
+  const created = await readJson(await app.request('/v1/editor/invitations', { method: 'POST', headers: auth(token), body: '{}' }));
+  const invitation = created.body.invitation as { id: string; etag: string };
+  const presign = await readJson(
+    await app.request(`/v1/editor/invitations/${invitation.id}/photos/presign`, {
+      method: 'POST',
+      headers: auth(token),
+      body: JSON.stringify({ contentType: 'image/png', byteSize: PNG.length }),
+    }),
+  );
+  const uploadPath = new URL(presign.body.uploadUrl as string).pathname;
+  expect((await app.request(uploadPath, { method: 'PUT', body: PNG, headers: { 'content-type': 'image/png' } })).status).toBe(204);
+  const photoId = presign.body.photoId as string;
+  const completed = await readJson(
+    await app.request(`/v1/editor/invitations/${invitation.id}/photos/${photoId}/complete`, { method: 'POST', headers: auth(token) }),
+  );
+  await queued.shift()?.();
+  const ready = await readJson(await app.request(`/v1/editor/invitations/${invitation.id}`, { headers: auth(token) }));
+  const same = await readJson(
+    await app.request(`/v1/editor/invitations/${invitation.id}`, {
+      method: 'PATCH',
+      headers: { ...auth(token), 'if-match': (ready.body.invitation as { etag: string }).etag },
+      body: JSON.stringify({
+        photos: [{ id: photoId, sort: 0, focal: { x: 0.2, y: 0.3 }, filter: 'original', crop: { x: 0, y: 0, width: 1, height: 1 } }],
+      }),
+    }),
+  );
+  expect(completed.status).toBe(202);
+  expect(same.status).toBe(200);
+  expect(queued).toHaveLength(0);
+  const kept = (same.body.invitation as { photos: Array<{ status: string; filter: string; crop: { x: number; y: number; width: number; height: number } }> }).photos[0];
+  expect(kept).toMatchObject({ status: 'ready', filter: 'original', crop: { x: 0, y: 0, width: 1, height: 1 } });
+  const omitted = await readJson(
+    await app.request(`/v1/editor/invitations/${invitation.id}`, {
+      method: 'PATCH',
+      headers: { ...auth(token), 'if-match': (same.body.invitation as { etag: string }).etag },
+      body: JSON.stringify({ photos: [{ id: photoId, sort: 0, focal: { x: 0.6, y: 0.4 } }] }),
+    }),
+  );
+  expect(omitted.status).toBe(200);
+  expect(queued).toHaveLength(0);
+  expect((omitted.body.invitation as { photos: Array<{ status: string; crop: { width: number } }> }).photos[0]).toMatchObject({
+    status: 'ready',
+    crop: { x: 0, y: 0, width: 1, height: 1 },
+  });
+  const narrowed = await readJson(
+    await app.request(`/v1/editor/invitations/${invitation.id}`, {
+      method: 'PATCH',
+      headers: { ...auth(token), 'if-match': (omitted.body.invitation as { etag: string }).etag },
+      body: JSON.stringify({ photos: [{ id: photoId, sort: 0, crop: { x: 0, y: 0, width: 0.5, height: 1 } }] }),
+    }),
+  );
+  expect((narrowed.body.invitation as { photos: Array<{ status: string }> }).photos[0]?.status).toBe('processing');
+  expect(queued).toHaveLength(1);
+  const reset = await readJson(
+    await app.request(`/v1/editor/invitations/${invitation.id}`, {
+      method: 'PATCH',
+      headers: { ...auth(token), 'if-match': (narrowed.body.invitation as { etag: string }).etag },
+      body: JSON.stringify({ photos: [{ id: photoId, sort: 0 }] }),
+    }),
+  );
+  expect((reset.body.invitation as { photos: Array<{ crop: { width: number } }> }).photos[0]?.crop).toEqual({
+    x: 0,
+    y: 0,
+    width: 1,
+    height: 1,
+  });
+  expect(queued.length).toBeGreaterThan(0);
+});
+
 test('지출 상한에 닿으면 초안 생성이 멈춘다', async () => {
   const host = randomUUID();
   await insertUser(admin, host);

@@ -81,9 +81,20 @@ type EditorSession = {
 
 프론트가 Supabase 클라이언트로 직접 한다. 이 API는 세션을 만들지 않는다.
 
-1. 「무료로 만들기」→ `signInAnonymously()`. 실패하면 인라인 오류. 서버는 익명 가입에 Turnstile 을 붙이지 않는다(Turnstile 은 하객 공용 채널만). 남용은 IP·사용자당 초안 생성 횟수로 막는다.
-2. 발행 직전, 익명이면 `linkIdentity({ provider: 'kakao' })`. 같은 사용자 id 가 영구 계정이 된다. 초대장 `owner_id` 는 그대로다.
-3. 그 카카오 계정이 **이미 있으면** `linkIdentity` 는 실패한다(Manual linking 은 베타이고, 이미 있는 identity 에는 붙지 않는다). 이때 익명 세션은 유지된다. 프론트는 다이얼로그 「이 카카오 계정은 이미 Invife에 가입돼 있어요. 이 초안을 그 계정으로 옮길까요?」를 띄운다.
+### 3.1 비회원이 초안을 서버에 저장
+
+비회원 초안도 이 서버의 초대장 행이다. 브라우저에만 두지 않는다.
+
+1. 프론트가 Supabase JS 로 `signInAnonymously()` 를 호출한다. 실패하면 인라인 오류. 이 API 는 익명 가입에 Turnstile 을 붙이지 않는다(Turnstile 은 하객 공용 채널만). 남용은 IP·사용자당 초안 생성 횟수로 막는다(9절).
+2. 성공하면 Supabase 가 익명 사용자와 세션을 준다. 에디터 API 에 보내는 토큰은 그 세션의 `access_token` 이다. `Authorization: Bearer <access_token>`. 클레임 `role` 은 `authenticated`, `is_anonymous` 는 true 다. 만료되면 프론트가 Supabase 세션을 갱신해 새 access token 을 같은 헤더에 넣는다.
+3. `POST /v1/editor/invitations`(5.1)로 초안을 만든다. 소유자는 그 익명 사용자다. `201` 의 `invitation.id` 와 `etag` 를 보관한다.
+4. 이후 편집은 `PATCH /v1/editor/invitations/:id`(5.3)다. 같은 Bearer 와 `If-Match: <직전 etag>` 를 보낸다. 응답 `etag` 가 다음 `If-Match` 다.
+5. 익명은 발행과 명단이 `403 forbidden`, `reason: "login_required"` 다. 영구 계정으로 잇는 방법은 3.2 다.
+
+### 3.2 발행 직전, 카카오 계정으로 잇기
+
+1. 발행 직전, 익명이면 `linkIdentity({ provider: 'kakao' })`. 같은 사용자 id 가 영구 계정이 된다. 초대장 `owner_id` 는 그대로다.
+2. 그 카카오 계정이 **이미 있으면** `linkIdentity` 는 실패한다(Manual linking 은 베타이고, 이미 있는 identity 에는 붙지 않는다). 이때 익명 세션은 유지된다. 프론트는 다이얼로그 「이 카카오 계정은 이미 Invife에 가입돼 있어요. 이 초안을 그 계정으로 옮길까요?」를 띄운다.
 
 옮기기:
 
@@ -240,7 +251,7 @@ type EditorInvitationSummary = {
 
 `PATCH /v1/editor/invitations/:id`
 
-보낸 필드만 바꾼다. 없는 필드는 유지다. `families`, `accounts`를 보내면 그 배열은 **통째로 교체**다. `photos`는 나열한 id의 `sort`, `focal`, `crop`, `filter`만 바꾼다. 목록에서 뺀 사진은 지우지 않는다. 삭제는 `DELETE .../photos/:photoId`다. `crop` 이나 `filter` 가 바뀌고 이미 변종이 있으면 그 사진만 `processing` 으로 돌아가 다시 만든다. 새 파일이 나오기 전까지 `src` 는 이전 변종을 가리킨다.
+보낸 필드만 바꾼다. 없는 필드는 유지다. `families`, `accounts`를 보내면 그 배열은 **통째로 교체**다. `photos`는 나열한 id의 `sort`, `focal`, `crop`, `filter`만 바꾼다. 목록에서 뺀 사진은 지우지 않는다. 삭제는 `DELETE .../photos/:photoId`다. `crop` 을 생략하면 `{ x: 0, y: 0, width: 1, height: 1 }` 로 저장한다. editor-spec 에는 자유 크롭이 없고 초점만 있으므로, 화면은 이 전체 프레임을 보내도 된다. 저장돼 있는 `crop` 과 `filter` 가 그대로면 다시 만들지 않는다. 초점만 바뀌어도 변환은 다시 하지 않는다. `crop` 또는 `filter` 가 달라지고 이미 변종이 있으면 그 사진만 `processing` 으로 돌아가 다시 만든다. 새 파일이 나오기 전까지 `src` 는 이전 변종을 가리킨다.
 
 ```ts
 type AutosaveBody = {
@@ -303,17 +314,17 @@ type AutosaveBody = {
 | 혼주 이름 | 0–10, 관계 0–6 |
 | 계좌 | 자동 저장은 측마다 최대 3, 길이만 본다. 발행 때는 한 칸이라도 채웠으면 관계·예금주 2자 이상·은행·번호(숫자·`-`, 숫자 8–20)가 모두 있어야 한다 |
 | 초점 | 0–1. 기본 (0.5, 0.4) |
-| 크롭 | `x`,`y`,`width`,`height` 는 원본 비율 0–1. `width`·`height` 는 0보다 크고, 시작+크기는 1을 넘지 않는다. 기본은 전체 `{0,0,1,1}` |
+| 크롭 | `x`,`y`,`width`,`height` 는 원본 비율 0–1. `width`·`height` 는 0보다 크고, 시작+크기는 1을 넘지 않는다. 생략하면 전체 `{0,0,1,1}` 로 저장한다. 저장값과 같으면 재변환하지 않는다 |
 | 사진 필터 | `original` · `warm` · `mono`. 사진마다. 초대장 `photoFilter` 를 바꾸면 아직 개별 필터를 같이 안 보낸 사진에 일괄 적용되고, 변종이 있는 사진은 다시 만든다 |
 | 마감 덮어쓰기 | 예식 시작(날짜+시간, KST)보다 늦으면 `validation` |
-| 고인 | `deceased` 인데 `deceasedStyle` 이 없으면 발행 때 `validation`. 자동 저장은 허용(체크 직후 라디오 전) |
+| 고인 | 부모가 `deceased: true` 이고 이름이 비어 있지 않은데 `deceasedStyle` 이 없으면 발행이 `400 validation`, `reason: "deceased_style"`. 표기는 `hanja`(故) 또는 `hangul`(고)이다. 이름은 비어 있고 고인만 체크된 경우는 막지 않는다. 자동 저장은 표기 없이 받는다 |
 | 사진 장 수 | 메타 배열도 최대 10 |
 
 10분 단위 시간은 프론트만 지킨다. 서버는 `HH:mm` 이면 받는다. 「오늘 이후」도 프론트 검증이다. 서버는 달력 날짜이기만 하면 저장한다(지난 예식 수정·시드).
 
 ### 5.4 발행 · 반영 · 발행 취소 · 삭제
 
-발행 필수: 신랑·신부 이름, 신랑·신부 `givenName`(1자 이상, 자동 채움 없음), 날짜, 시간, 예식장, 주소, 대표 사진 1장이 `ready`. 고인이면 표기 방식. 전화·혼주 전화·계좌는 이 시점에 형식을 검사한다. 오류는 `field` 에 `groom.givenName`, `groom.phone`, `accounts.number` 처럼 점 경로를 담는다.
+발행 필수: 신랑·신부 이름, 신랑·신부 `givenName`(1자 이상, 자동 채움 없음), 날짜, 시간, 예식장, 주소, 대표 사진 1장이 `ready`. 고인으로 표시했고 이름이 있는 부모는 `deceasedStyle` 이 `hanja`(故) 또는 `hangul`(고)이어야 한다. 표기를 고르지 않으면 `reason: "deceased_style"`. 전화·혼주 전화·계좌는 이 시점에 형식을 검사한다. 오류는 `field` 에 `groom.givenName`, `groom.phone`, `accounts.number` 처럼 점 경로를 담는다. `deceased_style` 은 점 경로가 아니라 `reason` 이다.
 
 `POST /v1/editor/invitations/:id/publish`
 
@@ -533,7 +544,7 @@ type PublicRsvpRow = {
 8. `attendingGuests` = 참석 응답 × (1 + 동행).
 9. `complete` 는 `202` 와 `processing` 을 바로 준다. 상태는 `GET .../photos` 와 `GET .../photos/:photoId` 로 폴링하고, 응답에 현재 초대장 `etag` 가 있다(6.2). 변환이 끝나도 `etag` 는 그대로라 자동 저장 `If-Match` 를 새로 받지 않아도 된다.
 10. 공개 slug 목록은 인증 없이 배열이다.
-11. 사진 자동 저장은 `sort`, `focal`, `crop`, `filter` 를 받는다. 크롭·필터가 바뀌면 다시 만들고, 그동안 이전 변종을 준다. 목록에서 빼도 삭제되지 않는다.
+11. 사진 자동 저장은 `sort`, `focal`, `crop`, `filter` 를 받는다. `crop` 을 생략하면 전체 프레임 `{0,0,1,1}` 이다. 저장돼 있는 `crop`·`filter` 와 같으면 다시 만들지 않는다. 달라지면 다시 만들고, 그동안 이전 변종을 준다. 목록에서 빼도 삭제되지 않는다.
 12. 자동 저장은 전화·계좌의 미완성을 받는다. 형식은 발행 때 필드 오류로 본다.
 
-사진 최대 장수, 크롭·필터, 발행 필수 항목이 editor-spec 과 글자 단위로 다른 곳은 프론트의 후속 diff 를 기다린다. 그 전까지 이 문서가 구현 기준이다.
+자유 크롭 UI 는 없다. 초점은 사진마다 저장하고, 크롭은 전체 프레임이다. `givenName` 발행 필수는 소유자 결정 전까지 지금 규칙(비어 있으면 거절)을 유지한다. 사진 최대 장수가 editor-spec 과 다른 곳은 프론트의 후속 diff 를 기다린다. 그 전까지 이 문서가 구현 기준이다.
