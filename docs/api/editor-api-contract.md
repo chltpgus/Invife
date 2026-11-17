@@ -20,7 +20,7 @@
 
 익명 로그인으로 만든 사용자도 JWT 역할은 `authenticated` 다. 익명 여부는 `is_anonymous` 클레임으로만 가른다. 어드민은 `app_metadata.role = 'admin'` 만 본다. `user_metadata` 는 사용자가 바꿀 수 있으므로 권한에 쓰지 않는다.
 
-초대장 한 건을 읽거나 쓰면 응답 헤더 `ETag: "<etag>"` 와 본문 `etag`(ISO 시각, `updatedAt` 과 같은 값)를 같이 준다. 목록의 각 항목도 `etag` 를 가진다. 409 도 헤더와 본문 `etag`·`invitation` 을 준다. 다음 자동 저장의 `If-Match` 는 가장 최근에 받은 `etag` 다. 따옴표 있는 헤더 값과 본문의 맨 시각 둘 다 받는다.
+초대장 한 건을 읽거나 쓰면 응답 헤더 `ETag: "<etag>"` 와 본문 `etag` 를 같이 준다. `etag` 는 사용자가 고칠 수 있는 내용만으로 만든 SHA-256 이다. 본문 필드, 사진 순서·포커스·크롭·필터, 사진 추가·삭제가 들어간다. 사진 변환 상태, 변종 URL, LQIP 처럼 서버만 바꾸는 값은 빠진다. 그래서 변환이 끝나도 `etag` 는 그대로다. 목록의 각 항목도 같은 `etag` 를 가진다. 409 도 헤더와 본문 `etag`·`invitation` 을 준다. 다음 자동 저장의 `If-Match` 는 가장 최근에 받은 `etag` 다. 따옴표 있는 헤더 값과 본문 값 둘 다 받는다. `updatedAt` 은 저장 시각이고 `etag` 와 다르다.
 
 오류 본문:
 
@@ -375,7 +375,7 @@ R2 가 설정돼 있으면 `uploadUrl` 은 버킷 PUT 서명 URL 이다. 없으�
 
 `status` 는 `processing` | `ready` | `failed`. `ready` 이거나, 다시 만드는 중에도 이전 변종이 있으면 `src` 와 `lqip` 가 있다. 새 파일이 준비되기 전에는 그 이전 변종을 보여 준다.
 
-폴링: 업로드한 장만 1초 간격으로 위 GET 을 본다. 전부 `ready` 또는 `failed` 이면 멈춘다. 60초가 지나도 `processing` 이면 실패로 보고 다시 `complete` 할 수 있다. 응답의 `etag` 를 다음 자동 저장 `If-Match` 에 쓴다. 변환이 끝나면 초대장 `etag` 가 바뀐다.
+폴링: 업로드한 장만 1초 간격으로 위 GET 을 본다. 전부 `ready` 또는 `failed` 이면 멈춘다. 60초가 지나도 `processing` 이면 실패로 보고 다시 `complete` 할 수 있다. 두 GET 의 `etag` 는 그 초대장의 현재 `etag` 다. 변환이 끝나도 이 값은 바뀌지 않으므로, 폴링 뒤에 `If-Match` 를 갈아끼울 필요가 없다. 사진 추가·삭제·순서·포커스·크롭·필터를 저장할 때만 `etag` 가 바뀐다.
 
 서버 파이프라인(`backend/src/photos/process.ts`)은 응답을 보낸 뒤 같은 프로세스에서 돈다. 프로세스가 죽으면 `npm run job:photos` 가 2분이 넘은 `processing|failed` 를 마스터로 다시 만든다.
 
@@ -531,7 +531,7 @@ type PublicRsvpRow = {
 6. claim 티켓은 `sessionStorage` 키 `invife:claim-ticket`, 복귀 경로 `/edit/{id}/publish`. 로그인 화면 연결은 프론트가 나중에 잇는다.
 7. `editKey` 가 있는 수정은 Turnstile 토큰을 무시한다. 첫 제출만 검사한다.
 8. `attendingGuests` = 참석 응답 × (1 + 동행).
-9. `complete` 는 `202` 와 `processing` 을 바로 준다. 상태는 `GET .../photos` 로 폴링한다(6.2).
+9. `complete` 는 `202` 와 `processing` 을 바로 준다. 상태는 `GET .../photos` 와 `GET .../photos/:photoId` 로 폴링하고, 응답에 현재 초대장 `etag` 가 있다(6.2). 변환이 끝나도 `etag` 는 그대로라 자동 저장 `If-Match` 를 새로 받지 않아도 된다.
 10. 공개 slug 목록은 인증 없이 배열이다.
 11. 사진 자동 저장은 `sort`, `focal`, `crop`, `filter` 를 받는다. 크롭·필터가 바뀌면 다시 만들고, 그동안 이전 변종을 준다. 목록에서 빼도 삭제되지 않는다.
 12. 자동 저장은 전화·계좌의 미완성을 받는다. 형식은 발행 때 필드 오류로 본다.

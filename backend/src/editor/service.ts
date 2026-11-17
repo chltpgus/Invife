@@ -10,7 +10,6 @@ import {
   isTime,
   iso,
   phoneOk,
-  sameInstant,
 } from '../domain/text';
 import { linkToken, randomToken, recipientMaterial, sharedMaterial, tokenHash, ipHash } from '../domain/tokens';
 import {
@@ -124,6 +123,7 @@ export async function listInvitations(deps: EditorDeps, claims: AuthClaims) {
       recipient_count: number;
       unanswered: number;
       cover_id: string | null;
+      etag: string;
     }>(`
       select i.id, i.slug, i.status, i.theme, i.groom_name, i.bride_name, i.ceremony_date,
              i.revision, i.published_revision, i.updated_at,
@@ -136,7 +136,8 @@ export async function listInvitations(deps: EditorDeps, claims: AuthClaims) {
                  and not exists (select 1 from rsvp_responses r where r.recipient_id = p.id)) as unanswered,
              (select ph.id from invitation_photos ph
                where ph.invitation_id = i.id and ph.status = 'ready'
-               order by ph.sort limit 1) as cover_id
+               order by ph.sort limit 1) as cover_id,
+             public.invitation_etag(i.id) as etag
       from invitations i
       where i.status <> 'deleted'
       order by i.updated_at desc
@@ -160,7 +161,7 @@ export async function listInvitations(deps: EditorDeps, claims: AuthClaims) {
         hasUnpublishedChanges: row.status === 'published' && row.published_revision !== row.revision,
         purgeAt: purgeAt(row.ceremony_date, flags.purgeDelayDays),
         updatedAt: iso(row.updated_at),
-        etag: iso(row.updated_at),
+        etag: row.etag,
       })),
     };
   });
@@ -175,7 +176,7 @@ export async function autosave(deps: EditorDeps, claims: AuthClaims, id: string,
   const patch = parseAutosave(body);
   const jobs = await withUser(deps.pool, claims, async (client) => {
     const current = await loadRow(client, id);
-    if (!sameInstant(etagValue(ifMatch), iso(current.updatedAt))) {
+    if (etagValue(ifMatch) !== (await loadEtag(client, id))) {
       throw new HttpError(409, 'conflict', { invitation: await present(client, deps, current) });
     }
     if (!patch) return [];
@@ -301,7 +302,7 @@ export async function completePhoto(deps: EditorDeps, claims: AuthClaims, invita
     const photo = row.photos.find((item) => item.id === photoId);
     if (!photo) throw new HttpError(404, 'not_found');
     if (photo.status === 'ready' || photo.status === 'processing') {
-      return { photo: presentPhoto(invitationId, photo), etag: iso(row.updatedAt), start: false };
+      return { photo: presentPhoto(invitationId, photo), etag: await loadEtag(client, invitationId), start: false };
     }
     if (photo.status !== 'pending' && photo.status !== 'failed') {
       throw new HttpError(400, 'validation', { field: 'photo', reason: 'invalid' });
@@ -312,7 +313,7 @@ export async function completePhoto(deps: EditorDeps, claims: AuthClaims, invita
     if (!marked) throw new HttpError(404, 'not_found');
     return {
       photo: presentPhoto(invitationId, marked),
-      etag: iso(next.updatedAt),
+      etag: await loadEtag(client, invitationId),
       start: true,
       filter: marked.filter,
       crop: cropOf(marked),
@@ -328,7 +329,7 @@ export async function listPhotos(deps: EditorDeps, claims: AuthClaims, invitatio
   return withUser(deps.pool, claims, async (client) => {
     const row = await loadRow(client, invitationId);
     return {
-      etag: iso(row.updatedAt),
+      etag: await loadEtag(client, invitationId),
       photos: [...row.photos].sort((a, b) => a.sort - b.sort).map((photo) => presentPhoto(invitationId, photo)),
     };
   });
@@ -339,7 +340,7 @@ export async function getPhoto(deps: EditorDeps, claims: AuthClaims, invitationI
     const row = await loadRow(client, invitationId);
     const photo = row.photos.find((item) => item.id === photoId);
     if (!photo) throw new HttpError(404, 'not_found');
-    return { etag: iso(row.updatedAt), photo: presentPhoto(invitationId, photo) };
+    return { etag: await loadEtag(client, invitationId), photo: presentPhoto(invitationId, photo) };
   });
 }
 
@@ -533,7 +534,7 @@ export async function rsvpDashboard(deps: EditorDeps, claims: AuthClaims, invita
           : guestPath(row.slug, linkToken(deps.config.linkSecret, recipientMaterial(item.id, item.token_version))),
       })),
       byPublicLink: { invite: toPublic('invite'), rsvpLink: toPublic('rsvp_link') },
-      etag: iso(row.updatedAt),
+      etag: await loadEtag(client, invitationId),
     };
   });
 }
@@ -610,7 +611,6 @@ async function renderPhoto(
       filter,
       'ready',
     ]);
-    await client.query('update invitations set revision = revision + 1 where id = $1', [invitationId]);
   });
   if (sourceName === 'original') await deps.storage.delete(photoKey(invitationId, photoId, 'original'));
 }
@@ -656,7 +656,7 @@ async function listRecipients(deps: EditorDeps, claims: AuthClaims, invitationId
               }
             : null,
       }));
-    return { recipients, etag: iso(row.updatedAt) };
+    return { recipients, etag: await loadEtag(client, invitationId) };
   });
 }
 
@@ -736,7 +736,7 @@ async function present(client: DatabaseClient, deps: EditorDeps, row: Invitation
     purgeAt: purgeAt(row.ceremonyDate, flags.purgeDelayDays),
     createdAt: iso(row.createdAt),
     updatedAt: iso(row.updatedAt),
-    etag: iso(row.updatedAt),
+    etag: await loadEtag(client, row.id),
     publishedAt: row.publishedAt ? iso(row.publishedAt) : null,
   };
 }
@@ -1163,6 +1163,13 @@ function cropOf(photo: PhotoRow): NormalizedCrop {
 
 function sameCrop(left: NormalizedCrop, right: NormalizedCrop): boolean {
   return left.x === right.x && left.y === right.y && left.width === right.width && left.height === right.height;
+}
+
+async function loadEtag(client: DatabaseClient, id: string): Promise<string> {
+  const result = await client.query<{ invitation_etag: string }>('select public.invitation_etag($1) as invitation_etag', [id]);
+  const etag = result.rows[0]?.invitation_etag;
+  if (!etag) throw new HttpError(404, 'not_found');
+  return etag;
 }
 
 function etagValue(header: string): string {

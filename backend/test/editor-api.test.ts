@@ -50,7 +50,7 @@ test('초안, 자동저장 충돌, 사진, 발행, 같은 슬러그 재발행, �
   const saved = await readJson(
     await app.request(`/v1/editor/invitations/${invitation.id}`, {
       method: 'PATCH',
-      headers: { ...auth(token), 'if-match': invitation.updatedAt },
+      headers: { ...auth(token), 'if-match': invitation.etag },
       body: JSON.stringify({
         groom: { name: '김신랑', givenName: '신랑', phone: '010' },
         bride: { name: '이신부', givenName: '신부' },
@@ -64,7 +64,7 @@ test('초안, 자동저장 충돌, 사진, 발행, 같은 슬러그 재발행, �
   const conflict = await readJson(
     await app.request(`/v1/editor/invitations/${invitation.id}`, {
       method: 'PATCH',
-      headers: { ...auth(token), 'if-match': invitation.updatedAt },
+      headers: { ...auth(token), 'if-match': invitation.etag },
       body: JSON.stringify({ greeting: '다시' }),
     }),
   );
@@ -95,6 +95,7 @@ test('초안, 자동저장 충돌, 사진, 발행, 같은 슬러그 재발행, �
   await queued.shift()?.();
   const ready = await readJson(await app.request(`/v1/editor/invitations/${invitation.id}/photos/${photoId}`, { headers: auth(token) }));
   expect(ready.body.photo).toMatchObject({ status: 'ready', lowQuality: true, filter: 'original' });
+  expect(ready.body.etag).toBe(completed.body.etag);
   expect((ready.body.photo as { src: { w800: string } }).src.w800).toContain('w800.webp');
   const currentAfterPhoto = ready.body.etag as string;
   const recropped = await readJson(
@@ -239,6 +240,51 @@ test('익명 발행은 막히고, 클레임 티켓으로 기존 계정에 초안
   expect(claimed.body.invitations).toEqual([expect.objectContaining({ id })]);
   expect((await readJson(await app.request(`/v1/editor/invitations/${id}`, { headers: auth(anonToken) }))).status).toBe(404);
   expect((await readJson(await app.request(`/v1/editor/invitations/${id}`, { headers: auth(hostToken) }))).status).toBe(200);
+});
+
+test('사진 변환이 끝나도 etag 는 그대로이고, 그 값으로 자동 저장된다', async () => {
+  const host = randomUUID();
+  await insertUser(admin, host, false);
+  const token = await accessToken(host);
+  const created = await readJson(await app.request('/v1/editor/invitations', { method: 'POST', headers: auth(token), body: '{}' }));
+  const invitation = created.body.invitation as { id: string; etag: string };
+  const presign = await readJson(
+    await app.request(`/v1/editor/invitations/${invitation.id}/photos/presign`, {
+      method: 'POST',
+      headers: auth(token),
+      body: JSON.stringify({ contentType: 'image/png', byteSize: PNG.length }),
+    }),
+  );
+  expect(presign.status).toBe(201);
+  const uploadPath = new URL(presign.body.uploadUrl as string).pathname;
+  expect((await app.request(uploadPath, { method: 'PUT', body: PNG, headers: { 'content-type': 'image/png' } })).status).toBe(204);
+  const completed = await readJson(
+    await app.request(`/v1/editor/invitations/${invitation.id}/photos/${presign.body.photoId}/complete`, {
+      method: 'POST',
+      headers: auth(token),
+    }),
+  );
+  expect(completed.status).toBe(202);
+  const etag = completed.body.etag as string;
+  expect(queued).toHaveLength(1);
+  await queued.shift()?.();
+  const photo = await readJson(
+    await app.request(`/v1/editor/invitations/${invitation.id}/photos/${presign.body.photoId}`, { headers: auth(token) }),
+  );
+  const photos = await readJson(await app.request(`/v1/editor/invitations/${invitation.id}/photos`, { headers: auth(token) }));
+  expect(photo.body.photo).toMatchObject({ status: 'ready' });
+  expect(photo.body.etag).toBe(etag);
+  expect(photos.body.etag).toBe(etag);
+  const saved = await readJson(
+    await app.request(`/v1/editor/invitations/${invitation.id}`, {
+      method: 'PATCH',
+      headers: { ...auth(token), 'if-match': etag },
+      body: JSON.stringify({ greeting: '변환 뒤에도 저장' }),
+    }),
+  );
+  expect(saved.status).toBe(200);
+  expect((saved.body.invitation as { greeting: string; etag: string }).greeting).toBe('변환 뒤에도 저장');
+  expect((saved.body.invitation as { etag: string }).etag).not.toBe(etag);
 });
 
 test('지출 상한에 닿으면 초안 생성이 멈춘다', async () => {

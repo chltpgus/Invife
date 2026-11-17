@@ -1436,6 +1436,88 @@ begin
 end
 $$;
 
+-- 사용자가 고친 내용만으로 버전을 만든다. 변환 상태·변종 URL·LQIP 는 넣지 않는다.
+create or replace function public.invitation_etag(p_id uuid)
+returns text
+language sql
+stable
+security definer
+set search_path = public, extensions
+as $$
+  select encode(extensions.digest(convert_to(payload::text, 'UTF8'), 'sha256'::text), 'hex'::text)
+  from (
+    select jsonb_build_object(
+      'theme', i.theme,
+      'photoFilter', i.photo_filter,
+      'groomName', i.groom_name,
+      'groomGivenName', i.groom_given_name,
+      'groomPhone', i.groom_phone,
+      'brideName', i.bride_name,
+      'brideGivenName', i.bride_given_name,
+      'bridePhone', i.bride_phone,
+      'groomRelation', i.groom_relation,
+      'brideRelation', i.bride_relation,
+      'ceremonyDate', i.ceremony_date,
+      'ceremonyTime', to_char(i.ceremony_time, 'HH24:MI'),
+      'venueName', i.venue_name,
+      'hall', i.hall,
+      'address', i.address,
+      'addressDetail', i.address_detail,
+      'lat', i.lat,
+      'lng', i.lng,
+      'greeting', i.greeting,
+      'transportParking', i.transport_parking,
+      'transportSubway', i.transport_subway,
+      'transportBus', i.transport_bus,
+      'transportOther', i.transport_other,
+      'accountsNote', i.accounts_note,
+      'rsvpDeadline', i.rsvp_deadline_override,
+      'families', coalesce((
+        select jsonb_agg(jsonb_build_object(
+          'side', f.side,
+          'role', f.role,
+          'name', f.name,
+          'phone', f.phone,
+          'deceased', f.deceased,
+          'deceasedStyle', f.deceased_style
+        ) order by f.side, f.role)
+        from public.invitation_families f
+        where f.invitation_id = i.id
+      ), '[]'::jsonb),
+      'accounts', coalesce((
+        select jsonb_agg(jsonb_build_object(
+          'side', a.side,
+          'sort', a.sort,
+          'relation', a.relation,
+          'holder', a.holder,
+          'bank', a.bank,
+          'number', a.account_number
+        ) order by a.side, a.sort)
+        from public.invitation_accounts a
+        where a.invitation_id = i.id
+      ), '[]'::jsonb),
+      'photos', coalesce((
+        select jsonb_agg(jsonb_build_object(
+          'id', p.id,
+          'sort', p.sort,
+          'focalX', p.focal_x,
+          'focalY', p.focal_y,
+          'cropX', p.crop_x,
+          'cropY', p.crop_y,
+          'cropW', p.crop_w,
+          'cropH', p.crop_h,
+          'filter', p.color_filter
+        ) order by p.sort, p.id)
+        from public.invitation_photos p
+        where p.invitation_id = i.id
+      ), '[]'::jsonb)
+    ) as payload
+    from public.invitations i
+    where i.id = p_id
+      and (i.owner_id = (select auth.uid()) or (select private.is_admin()))
+  ) snapshot
+$$;
+
 create or replace function public.mark_photo_processing(p_photo_id uuid)
 returns void
 language plpgsql
@@ -1596,6 +1678,7 @@ grant execute on function private.usage_status() to authenticated;
 grant execute on function private.add_usage(int, bigint, int) to authenticated;
 
 grant execute on function public.generate_slug() to authenticated;
+grant execute on function public.invitation_etag(uuid) to authenticated;
 grant execute on function public.invitations_before_write() to authenticated;
 grant execute on function public.photos_limit() to authenticated;
 grant execute on function public.ceremony_start(date, time) to authenticated, invife_app;
