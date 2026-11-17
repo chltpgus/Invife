@@ -1,5 +1,6 @@
 'use client';
 
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { eyebrows } from '@/content/copy';
 import { Icon } from '@/components/icon';
@@ -19,7 +20,7 @@ import {
   validateGuestName,
   type RsvpPhase,
 } from '@/domain/rsvp';
-import type { GuestLink, Invitation, RsvpResponse } from '@/domain/types';
+import type { GuestLink, Invitation, RsvpResponse, RsvpSubmitBody } from '@/domain/types';
 import { env } from '@/env';
 import { browserStore } from '@/rsvp/client';
 import { createRsvpClient } from '@/rsvp/create-client';
@@ -46,12 +47,20 @@ export function RsvpSection({
   const [response, setResponse] = useState<RsvpResponse | null>(null);
   const [editKey, setEditKey] = useState<string | undefined>();
   const token = link.channel === 'invite' ? undefined : link.token;
+  const contextQuery = useQuery({
+    queryKey: ['rsvp-context', invitation.slug, token ?? null],
+    queryFn: () => client.context({ slug: invitation.slug, token }),
+  });
 
   useEffect(() => {
-    let live = true;
-    void client.context({ slug: invitation.slug, token }).then((result) => {
-      if (!live) return;
-      if (!result.ok) {
+    if (contextQuery.isError) {
+      setUnavailable(true);
+      setReady(true);
+      return;
+    }
+    const result = contextQuery.data;
+    if (!result) return;
+    if (!result.ok) {
         if (result.code === 'not_found') onMissing();
         else setUnavailable(true);
         setReady(true);
@@ -72,11 +81,7 @@ export function RsvpSection({
         setEditKey(stored?.editKey);
       }
       setReady(true);
-    });
-    return () => {
-      live = false;
-    };
-  }, [client, invitation.slug, link.channel, token, onMissing, store]);
+  }, [contextQuery.data, contextQuery.isError, invitation.slug, token, onMissing, store]);
 
   return (
     <section className="section" id="rsvp" aria-labelledby="rsvp-title">
@@ -142,6 +147,7 @@ function RsvpForm({
 }) {
   const client = useRef(createRsvpClient()).current;
   const store = useRef(browserStore()).current;
+  const submitRsvp = useMutation({ mutationFn: (body: RsvpSubmitBody) => client.submit(body) });
   const [response, setResponse] = useState(initialResponse);
   const [editKey, setEditKey] = useState(initialEditKey);
   const [phase, setPhase] = useState<RsvpPhase>(() =>
@@ -207,7 +213,7 @@ function RsvpForm({
       return;
     }
     setPhase({ ...phase, submitting: true, nameError: null, banner: 'none' });
-    const result = await client.submit({
+    const result = await submitRsvp.mutateAsync({
       slug: invitation.slug,
       channel: link.channel,
       token: link.channel === 'invite' ? undefined : link.token,

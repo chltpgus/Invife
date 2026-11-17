@@ -1,3 +1,4 @@
+import axios, { type AxiosInstance } from 'axios';
 import { invitations } from '@/data/fixtures';
 import { isDeadlineClosed } from '@/domain/dates';
 import { editStorageKey, normalizeGuestName, readStoredEdit, validateGuestName } from '@/domain/rsvp';
@@ -139,20 +140,25 @@ export function createFixtureRsvpClient(store: MemoryStore, now = () => new Date
   };
 }
 
-export function createApiRsvpClient(baseUrl: string): RsvpClient {
+export const apiHttp = axios.create({
+  validateStatus: () => true,
+  headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+});
+
+export function createApiRsvpClient(baseUrl: string, http: AxiosInstance = apiHttp): RsvpClient {
   return {
     context(input) {
-      return postJson<RsvpContextResult>(`${baseUrl}/functions/v1/rsvp-context`, input, (response, payload) => {
-        if (response.ok && isRecord(payload) && 'status' in payload) return { ok: true, context: payload as RsvpContext };
-        if (response.status === 404) return { ok: false, code: 'not_found' };
-        if (response.status === 503) return { ok: false, code: 'unavailable' };
+      return postJson<RsvpContextResult>(http, `${baseUrl}/functions/v1/rsvp-context`, input, (reply) => {
+        if (reply.status < 400 && isRecord(reply.data) && 'status' in reply.data) return { ok: true, context: reply.data as RsvpContext };
+        if (reply.status === 404) return { ok: false, code: 'not_found' };
+        if (reply.status === 503) return { ok: false, code: 'unavailable' };
         return { ok: false, code: 'network' };
       });
     },
     submit(body) {
-      return postJson<RsvpSubmitResult>(`${baseUrl}/functions/v1/rsvp`, body, (response, payload) => {
-        if (response.ok && isRecord(payload) && 'response' in payload) {
-          const bodyPayload = payload as { response: RsvpResponse; edited?: boolean; editKey?: string };
+      return postJson<RsvpSubmitResult>(http, `${baseUrl}/functions/v1/rsvp`, body, (reply) => {
+        if (reply.status < 400 && isRecord(reply.data) && 'response' in reply.data) {
+          const bodyPayload = reply.data as { response: RsvpResponse; edited?: boolean; editKey?: string };
           return {
             ok: true,
             response: bodyPayload.response,
@@ -160,22 +166,26 @@ export function createApiRsvpClient(baseUrl: string): RsvpClient {
             editKey: bodyPayload.editKey,
           };
         }
-        return readSubmitError(response, payload);
+        return readSubmitError(reply);
       });
     },
   };
 }
 
-async function postJson<T>(url: string, body: unknown, map: (response: Response, payload: unknown) => T): Promise<T> {
+type Reply = { status: number; data: unknown; header(name: string): string | undefined };
+
+async function postJson<T>(http: AxiosInstance, url: string, body: unknown, map: (reply: Reply) => T): Promise<T> {
   try {
-    const response = await fetch(url, {
-      method: 'POST',
-      cache: 'no-store',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
+    const response = await http.post(url, body);
+    return map({
+      status: response.status,
+      data: response.data,
+      header(name) {
+        const value = response.headers[name.toLowerCase()];
+        if (Array.isArray(value)) return value[0];
+        return typeof value === 'string' ? value : undefined;
+      },
     });
-    const payload = await response.json().catch(() => null);
-    return map(response, payload);
   } catch {
     return { ok: false, code: 'network' } as T;
   }
@@ -185,22 +195,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
-function readSubmitError(response: Response, payload: unknown): RsvpSubmitResult {
-  const error = (payload as { error?: { code?: string; field?: string; reason?: string } } | null)?.error;
+function readSubmitError(reply: Reply): RsvpSubmitResult {
+  const error = (reply.data as { error?: { code?: string; field?: string; reason?: string } } | null)?.error;
   const code = error?.code;
-  const retryAfter = Number(response.headers.get('Retry-After'));
-  if (response.status === 400 && code === 'validation') {
+  const retryAfter = Number(reply.header('retry-after'));
+  if (reply.status === 400 && code === 'validation') {
     return { ok: false, code: 'validation', field: error?.field, reason: error?.reason };
   }
-  if (response.status === 400) return { ok: false, code: 'validation' };
-  if (response.status === 403 && code === 'turnstile_failed') return { ok: false, code: 'turnstile_failed' };
-  if (response.status === 403 && code === 'edit_forbidden') return { ok: false, code: 'edit_forbidden' };
-  if (response.status === 404) return { ok: false, code: 'not_found' };
-  if (response.status === 409) return { ok: false, code: 'closed' };
-  if (response.status === 410) return { ok: false, code: 'revoked' };
-  if (response.status === 429) {
+  if (reply.status === 400) return { ok: false, code: 'validation' };
+  if (reply.status === 403 && code === 'turnstile_failed') return { ok: false, code: 'turnstile_failed' };
+  if (reply.status === 403 && code === 'edit_forbidden') return { ok: false, code: 'edit_forbidden' };
+  if (reply.status === 404) return { ok: false, code: 'not_found' };
+  if (reply.status === 409) return { ok: false, code: 'closed' };
+  if (reply.status === 410) return { ok: false, code: 'revoked' };
+  if (reply.status === 429) {
     return { ok: false, code: 'rate_limited', retryAfter: Number.isFinite(retryAfter) ? retryAfter : undefined };
   }
-  if (response.status === 503) return { ok: false, code: 'unavailable' };
+  if (reply.status === 503) return { ok: false, code: 'unavailable' };
   return { ok: false, code: 'network' };
 }

@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
 import { Accounts } from '@/components/accounts';
 import { Cover } from '@/components/cover';
@@ -19,6 +20,15 @@ import type { Invitation } from '@/domain/types';
 import { sectionFlags } from '@/domain/visibility';
 
 export function InvitationView({ invitation }: { invitation: Invitation }) {
+  const [queries] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: {
+          queries: { retry: false, refetchOnWindowFocus: false, staleTime: Infinity },
+          mutations: { retry: false },
+        },
+      }),
+  );
   const pathname = usePathname();
   const link = parseGuestPath(pathname, invitation.slug);
   const [ended, setEnded] = useState(false);
@@ -77,16 +87,17 @@ export function InvitationView({ invitation }: { invitation: Invitation }) {
     return () => viewport.removeEventListener('resize', onResize);
   }, []);
 
-  if (!link || missing) return <NotFoundView />;
-  if (ended) return <EndedView invitation={invitation} />;
-
   const items: NavItem[] = [];
   if (flags.directions) items.push({ id: 'directions', label: '오시는 길' });
   if (flags.accounts) items.push({ id: 'accounts', label: '마음 전하실 곳' });
   items.push({ id: 'rsvp', label: '참석 여부' });
   const showNav = navOn && viewer === null && !envelope && !keyboard && items.length > 0;
 
-  return (
+  let body: ReactNode;
+  if (!link || missing) body = <NotFoundView />;
+  else if (ended) body = <EndedView invitation={invitation} />;
+  else
+    body = (
     <ToastProvider lift={showNav}>
       <div className={`column ${showNav ? 'has-nav' : ''}`} data-theme={invitation.theme}>
         {envelope ? <Envelope invitation={invitation} onDone={() => setEnvelope(false)} /> : null}
@@ -111,5 +122,7 @@ export function InvitationView({ invitation }: { invitation: Invitation }) {
         onAccounts={() => setAccountsOpen({ groom: true, bride: true })}
       />
     </ToastProvider>
-  );
+    );
+
+  return <QueryClientProvider client={queries}>{body}</QueryClientProvider>;
 }
