@@ -11,6 +11,7 @@
 | [제작자(에디터) 디자인 스펙](./design/editor-spec.md) | 제작·발행 화면 UI/UX 스펙 (구현 기준) |
 | [디자인 토큰](./design/tokens.json) | 색·타이포·간격 등 디자인 토큰 v1.1 (구현 기준) |
 | [하객 데이터 계약 (초안)](./api/guest-data-contract.md) | 하객 페이지가 소비하는 JSON·RSVP API 초안 |
+| [제작자 API 계약 (초안)](./api/editor-api-contract.md) | 에디터·발행·사진·명단·설정 API 초안 |
 | [화면 지도](./feature-map.md) | 사용자 기준 화면 이름과, 오늘 있는 것 |
 
 Figma는 시각 확인용이에요. 개발 시 기준 문서는 위 스펙과 `tokens.json`입니다.
@@ -24,7 +25,8 @@ docs/
 ├── planning/
 │   └── mvp-plan.md        # MVP 최종 기획안
 ├── api/
-│   └── guest-data-contract.md  # 하객 데이터 계약 초안
+│   ├── guest-data-contract.md  # 하객 데이터 계약 초안
+│   └── editor-api-contract.md  # 제작자 API 계약 초안
 └── design/
     ├── design-spec.md     # 하객 페이지 디자인 스펙
     ├── editor-spec.md     # 제작자(에디터) 디자인 스펙
