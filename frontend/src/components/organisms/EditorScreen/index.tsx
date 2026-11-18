@@ -297,7 +297,7 @@ function EditorWorkspace({ routeId }: { routeId: string }) {
       <button type="button" className="ed-btn ed-float" onClick={() => { setFullEnvelope(false); setFull(true); }}>
         <Eye size={18} /> 미리보기
       </button>
-      {note ? <p className="ed-banner" role="status" style={{ position: 'fixed', left: 16, right: 16, bottom: 80, zIndex: 60 }}>{note}</p> : null}
+      {note ? <p className="ed-banner fixed left-4 right-4 bottom-20 z-[60]" role="status">{note}</p> : null}
       {full ? (
         <div className="ed-full" role="dialog" aria-modal="true" aria-label="미리보기">
           <div className="ed-full-bar">
@@ -405,12 +405,14 @@ function Frame({
     </div>
   );
   if (!phone) return body;
-  const width = size === 'large' ? 390 : 360;
   const height = size === 'large' ? 844 : 640;
   return (
     <div className={`ed-frame-hold ${desktopFrame ? 'is-full' : ''}`} ref={hold}>
-      <div className={`ed-frame ${size === 'small' ? 'is-small' : ''}`} style={{ transform: `scale(${scale})`, marginBottom: height * scale - height }}>
-        <div className="ed-frame-scroll" style={{ width, height }}>{body}</div>
+      <div
+        className={`ed-frame is-fit ${size === 'small' ? 'is-small' : ''}`}
+        style={{ '--frame-scale': String(scale), '--frame-drop': `${height * scale - height}px` }}
+      >
+        <div className="ed-frame-scroll">{body}</div>
       </div>
     </div>
   );

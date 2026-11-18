@@ -20,7 +20,7 @@ const ThemePicker = ({ value, onChange }: ThemePickerProps) => {
             <strong>{theme.label}</strong>
             <span className="ed-chips">
               {theme.chips.map((color) => (
-                <span key={color} className="ed-chip" style={{ background: color }} />
+                <span key={color} className="ed-chip" style={{ '--chip': color }} />
               ))}
             </span>
             {value === theme.id ? <CheckCircle size={18} /> : null}

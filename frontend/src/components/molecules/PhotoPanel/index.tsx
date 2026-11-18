@@ -275,7 +275,13 @@ function FocalEditor({
         onKeyDown={nudge}
       >
         <img src={resolveAssetUrl(photo.src.w1600)} alt="" draggable={false} onLoad={() => { const current = metrics(); if (current) setBox(current); }} />
-        <span className="ed-focal-mark" style={{ left: box.width ? box.left + focal.x * box.width : `${focal.x * 100}%`, top: box.width ? box.top + focal.y * box.height : `${focal.y * 100}%` }} />
+        <span
+          className="ed-focal-mark"
+          style={{
+            '--focal-x': box.width ? `${box.left + focal.x * box.width}px` : `${focal.x * 100}%`,
+            '--focal-y': box.width ? `${box.top + focal.y * box.height}px` : `${focal.y * 100}%`,
+          }}
+        />
       </div>
       <p id="focal-live" className="ed-caption" aria-live="polite">
         사진을 탭하거나 방향키로 얼굴 위치를 지정하세요. 현재 가로 {Math.round(focal.x * 100)}%, 세로 {Math.round(focal.y * 100)}%
@@ -292,7 +298,7 @@ function FocalEditor({
 function Crop({ photo, label, width, height, fit }: { photo: Photo; label: string; width: number; height: number; fit: 'cover' | 'contain' }) {
   return (
     <div>
-      <div className="ed-crop" style={{ width, height }}>
+      <div className="ed-crop" style={{ '--crop-w': `${width}px`, '--crop-h': `${height}px` }}>
         <PhotoFrame photo={photo} alt={label} sizes={`${width}px`} fit={fit} />
       </div>
       <p>{label}</p>

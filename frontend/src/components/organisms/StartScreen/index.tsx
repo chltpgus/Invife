@@ -36,7 +36,7 @@ function StartBody({ samples }: { samples: Array<{ slug: string; label: string }
             <p className="ed-kicker">Invife</p>
             <h1 className="ed-title">누가 만들어도 잡지 화보처럼</h1>
             {latest ? (
-              <article className="ed-card" style={{ marginTop: 20 }}>
+              <article className="ed-card mt-5">
                 <h2 className="ed-title">만들던 청첩장 이어서 하기</h2>
                 <p className="ed-caption">{[latest.groomName, latest.brideName].filter(Boolean).join(' · ') || '새 청첩장'}</p>
                 <a className="ed-btn ed-wide" href={`/edit/${latest.id}/`}>이어서 만들기</a>
@@ -65,7 +65,7 @@ function StartBody({ samples }: { samples: Array<{ slug: string; label: string }
             </div>
           </div>
         </div>
-        <h2 className="ed-title" style={{ marginTop: 32 }}>샘플 초대장</h2>
+        <h2 className="ed-title mt-8!">샘플 초대장</h2>
         <ul className="ed-link-list">
           {samples.map((sample) => (
             <li key={sample.slug}>
