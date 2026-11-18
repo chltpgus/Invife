@@ -1,6 +1,6 @@
 # Invife 백엔드
 
-하객 RSVP, 제작자 에디터, 공개 초대장 JSON을 한 Node 서버에서 제공한다. 데이터베이스와 로그인은 Supabase(Postgres + Auth)다. 사진 변환은 이 프로세스의 `sharp`가 한다.
+하객 RSVP, 제작자 에디터, 공개 초대장 JSON을 한 **NestJS 장기 실행 서버**에서 제공한다. 데이터베이스와 로그인은 Supabase(Postgres + Auth)다. 사진 변환은 이 프로세스의 `sharp`가 한다. 서버리스·Edge 배포 대상이 아니다.
 
 경로는 프론트가 이미 쓰는 베이스를 그대로 둔다.
 
@@ -36,6 +36,17 @@ npm run seed:demo
 npm run dev
 ```
 
+`npm run dev`와 `npm run start:dev`는 파일 변경을 감시한다. CI와 운영 빌드는 다음 명령을 쓴다.
+
+```bash
+npm run typecheck
+npm test
+npm run build
+npm start
+```
+
+`npm run build`는 Node 20용 ESM을 `dist/index.js`로 만들고, `npm start`가 그 파일을 장기 실행한다.
+
 마이그레이션은 **슈퍼유저**로 적용한다. `security definer` 함수 소유자가 테이블 소유자가 아니면 하객 RPC가 RLS에 막힌다. `ADMIN_DATABASE_URL`이 그 접속이다. 앱 런타임은 `DATABASE_URL`의 `invife_app`(NOINHERIT, RLS 적용)이다.
 
 `supabase/testing/auth-stub.sql`은 순정 Postgres용이다. `auth.uid()`가 이미 있으면 마이그레이션 스크립트가 이 파일을 건너뛴다. 실제 Supabase에 적용하면 `auth.uid()`가 바뀐다.
@@ -69,6 +80,30 @@ npm run dev
 | `KAKAO_EMAIL_WEBHOOK` | 비우면 삭제 안내 메일은 outbox에 `skipped` |
 | `CORS_ORIGINS` | 쉼표로 구분. `Retry-After`를 노출한다 |
 | `RATE_LIMIT_*` | 비우면 계약의 기본 횟수 |
+
+`PORT` 기본값은 `.env.example`을 따른다. 애플리케이션 프로세스는 `DATABASE_URL`만 사용한다. `ADMIN_DATABASE_URL`은 마이그레이션·시드·보관 작업에만 전달한다.
+
+## NestJS 구조
+
+- `src/app.module.ts`, `src/app.ts`: 루트 모듈, CORS, 전역 guard/interceptor/filter, 애플리케이션 생성
+- `src/guest/guest.module.ts`: 하객 `rsvp-context`·RSVP controller/service
+- `src/editor/editor.module.ts`: 세션, 초대장, 자동 저장, 발행, 명단 controller/service
+- `src/photos/photos.module.ts`: 업로드, 비동기 변환, 사진 상태 controller/service
+- `src/public-invitations/public-invitations.module.ts`: 인증 없는 공개 목록·상세
+- `src/shared/auth.guard.ts`: Supabase Bearer JWT와 익명 세션 검증. 어드민 판단은 기존 DB 경계의 `app_metadata.role`
+- `src/shared/etag.interceptor.ts`: 에디터 응답의 계약 `ETag`
+- `src/shared/http.filter.ts`: `HttpError`·Postgres 오류·잘못된 JSON을 계약의 `error.code` 형태로 변환
+- `src/editor/service.ts`, `src/guest/service.ts`: 기존 계약·트랜잭션·RLS 호출을 유지하는 도메인 서비스
+
+## 운영 배포
+
+1. Node 20 이상 이미지에서 `npm ci && npm run build`를 실행한다.
+2. 런타임 이미지에는 production 의존성, `dist/`, `package.json`, `package-lock.json`을 둔다.
+3. 위 환경 변수를 주입하고 `npm start`를 실행한다. 프로세스는 HTTP 포트를 계속 열고 있어야 하며, 플랫폼의 restart policy를 켠다.
+4. 같은 리전에 Supabase와 R2를 두고, 종료 시 정상 종료 시간을 준다. 사진 변환은 API 프로세스 안에서 예약되므로 요청 직후 프로세스를 동결하는 serverless 환경은 지원하지 않는다.
+5. `npm run job:photos`와 `npm run job:retention`은 별도 스케줄러에서 같은 릴리스 이미지로 실행한다.
+
+프록시는 원래 `Host`, `Authorization`, `Content-Type`, `If-Match`, `X-Forwarded-For`를 전달하고 `ETag`, `Retry-After`, `Cache-Control`을 변경하지 않아야 한다.
 
 토큰·시크릿·하객 이름은 로그에 남기지 않는다. 오류 응답은 `error.code`만 내려 준다.
 

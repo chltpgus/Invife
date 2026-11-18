@@ -1,38 +1,43 @@
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
+import type { INestApplication } from '@nestjs/common';
 import { afterAll, beforeEach, expect, test } from 'vitest';
 import { createApp } from '../src/app';
 import { linkToken, recipientMaterial, sharedMaterial, tokenHash } from '../src/domain/tokens';
 import { createStorage } from '../src/photos/storage';
-import { adminPool, appPool, insertUser, LINK_SECRET, readJson, resetDatabase, testConfig } from './helpers';
+import { adminPool, appPool, insertUser, LINK_SECRET, nestClient, readJson, resetDatabase, testConfig } from './helpers';
 
 const admin = adminPool();
 const pool = appPool();
 const now = new Date('2026-11-17T03:00:00.000Z');
 const storage = createStorage(testConfig());
+const nestApps: INestApplication[] = [];
 
 beforeEach(() => resetDatabase(admin));
 afterAll(async () => {
+  await Promise.all(nestApps.map((app) => app.close()));
   await admin.end();
   await pool.end();
 });
 
-function guestApp(options: { turnstile?: boolean; contextLimit?: number; verify?: (token: string) => 'ok' | 'failed' | 'unavailable' } = {}) {
+async function guestApp(options: { turnstile?: boolean; contextLimit?: number; verify?: (token: string) => 'ok' | 'failed' | 'unavailable' } = {}) {
   const config = testConfig({
     turnstileSecret: options.turnstile ? 'secret' : '',
     limits: options.contextLimit ? { ...testConfig().limits, contextPerMinute: options.contextLimit } : undefined,
   });
-  return createApp({
+  const app = await createApp({
     pool,
     config,
     storage,
     now: () => now,
     verifyTurnstile: async (token) => options.verify?.(token) ?? 'ok',
   });
+  nestApps.push(app);
+  return nestClient(app);
 }
 
 test('없는 슬러그, 마감, 검증, 개인 링크 upsert, 공용 editKey, 회수', async () => {
-  const app = guestApp();
+  const app = await guestApp();
   const open = await seedInvitation(admin, { slug: 'openinvite1', date: '2027-06-01' });
   const closed = await seedInvitation(admin, { slug: 'closedinv01', date: '2026-11-01' });
 
@@ -85,6 +90,7 @@ test('없는 슬러그, 마감, 검증, 개인 링크 upsert, 공용 editKey, �
 
   const malformed = await readJson(await app.request('/functions/v1/rsvp', { method: 'POST', headers: jsonHeaders(), body: '{' }));
   expect(malformed.status).toBe(400);
+  expect(malformed.body).toEqual({ error: { code: 'validation' } });
 
   const first = await readJson(await app.request('/functions/v1/rsvp', {
     method: 'POST',
@@ -205,7 +211,7 @@ test('없는 슬러그, 마감, 검증, 개인 링크 upsert, 공용 editKey, �
 
 test('Turnstile 은 공용 첫 제출만 검사하고 수정 토큰은 무시한다', async () => {
   const open = await seedInvitation(admin, { slug: 'turnstile1', date: '2027-06-01' });
-  const app = guestApp({ turnstile: true, verify: (token) => (token === 'good' ? 'ok' : 'failed') });
+  const app = await guestApp({ turnstile: true, verify: (token) => (token === 'good' ? 'ok' : 'failed') });
   const missing = await readJson(await app.request('/functions/v1/rsvp', {
     method: 'POST',
     headers: jsonHeaders(),
@@ -250,7 +256,7 @@ test('Turnstile 은 공용 첫 제출만 검사하고 수정 토큰은 무시한
   }));
   expect(personal.status).toBe(200);
 
-  const down = guestApp({ turnstile: true, verify: () => 'unavailable' });
+  const down = await guestApp({ turnstile: true, verify: () => 'unavailable' });
   const unavailable = await readJson(await down.request('/functions/v1/rsvp', {
     method: 'POST',
     headers: jsonHeaders(),
@@ -262,7 +268,7 @@ test('Turnstile 은 공용 첫 제출만 검사하고 수정 토큰은 무시한
 
 test('횟수 제한은 Retry-After 를 남기고 데이터베이스가 죽으면 unavailable', async () => {
   const open = await seedInvitation(admin, { slug: 'ratelimit1', date: '2027-06-01' });
-  const app = guestApp({ contextLimit: 2 });
+  const app = await guestApp({ contextLimit: 2 });
   const body = JSON.stringify({ slug: open.slug });
   expect((await readJson(await app.request('/functions/v1/rsvp-context', { method: 'POST', headers: jsonHeaders(), body }))).status).toBe(200);
   expect((await readJson(await app.request('/functions/v1/rsvp-context', { method: 'POST', headers: jsonHeaders(), body }))).status).toBe(200);
@@ -272,7 +278,9 @@ test('횟수 제한은 Retry-After 를 남기고 데이터베이스가 죽으면
   expect(Number(limited.retryAfter)).toBeGreaterThan(0);
 
   const dead = new pg.Pool({ connectionString: 'postgres://invife_app:invife_app@127.0.0.1:1/invife_test', connectionTimeoutMillis: 400, max: 1 });
-  const down = createApp({ pool: dead, config: testConfig(), storage, now: () => now });
+  const downApp = await createApp({ pool: dead, config: testConfig(), storage, now: () => now });
+  nestApps.push(downApp);
+  const down = nestClient(downApp);
   const result = await readJson(await down.request('/functions/v1/rsvp-context', { method: 'POST', headers: jsonHeaders(), body }));
   expect(result.status).toBe(503);
   expect(result.body).toEqual({ error: { code: 'unavailable' } });

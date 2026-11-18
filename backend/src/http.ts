@@ -1,5 +1,3 @@
-import type { Context } from 'hono';
-
 export class HttpError extends Error {
   constructor(
     readonly status: number,
@@ -61,14 +59,6 @@ export function errorBody(error: HttpError): { status: number; body: Record<stri
   const etag = etagFrom(body);
   if (etag) body.etag = etag;
   return { status: error.status, body, retryAfter: error.details.retryAfter };
-}
-
-export function sendError(c: Context, error: HttpError) {
-  const { status, body, retryAfter } = errorBody(error);
-  if (retryAfter !== undefined) c.header('Retry-After', String(retryAfter));
-  const etag = typeof body.etag === 'string' ? body.etag : null;
-  if (etag) c.header('ETag', `"${etag}"`);
-  return c.json(body, status as 400);
 }
 
 function etagFrom(body: Record<string, unknown>): string | null {

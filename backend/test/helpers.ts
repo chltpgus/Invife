@@ -1,5 +1,7 @@
 import { SignJWT } from 'jose';
 import pg from 'pg';
+import request from 'supertest';
+import type { INestApplication } from '@nestjs/common';
 import type { Config } from '../src/config';
 
 export const JWT_SECRET = 'test-jwt-secret-0123456789abcdef';
@@ -114,5 +116,27 @@ export async function readJson(response: Response): Promise<{ status: number; bo
     body: text ? (JSON.parse(text) as Record<string, unknown>) : {},
     retryAfter: response.headers.get('retry-after'),
     etag: response.headers.get('etag'),
+  };
+}
+
+export function nestClient(app: INestApplication) {
+  return {
+    async request(path: string, init: RequestInit = {}): Promise<Response> {
+      const method = (init.method ?? 'GET').toLowerCase() as 'get';
+      let call = request(app.getHttpServer())[method](path);
+      new Headers(init.headers).forEach((value, key) => {
+        call = call.set(key, value);
+      });
+      if (init.body !== undefined && init.body !== null) {
+        call = call.send(Buffer.isBuffer(init.body) ? init.body : String(init.body));
+      }
+      const result = await call;
+      const headers = new Headers();
+      for (const [key, value] of Object.entries(result.headers)) {
+        if (Array.isArray(value)) value.forEach((item) => headers.append(key, String(item)));
+        else if (value !== undefined) headers.set(key, String(value));
+      }
+      return new Response(result.text || null, { status: result.status, headers });
+    },
   };
 }

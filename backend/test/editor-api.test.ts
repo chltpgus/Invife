@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeEach, expect, test } from 'vitest';
 import { createApp } from '../src/app';
 import { createStorage } from '../src/photos/storage';
-import { accessToken, adminPool, appPool, insertUser, readJson, resetDatabase, testConfig } from './helpers';
+import { accessToken, adminPool, appPool, insertUser, nestClient, readJson, resetDatabase, testConfig } from './helpers';
 
 const PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
@@ -14,19 +14,21 @@ const pool = appPool();
 const config = testConfig();
 const storage = createStorage(config);
 const queued: Array<() => Promise<void>> = [];
-const app = createApp({
+const nestApp = await createApp({
   pool,
   config,
   storage,
   now: () => new Date('2026-11-17T03:00:00.000Z'),
   schedule: (task) => queued.push(task),
 });
+const app = nestClient(nestApp);
 
 beforeEach(async () => {
   queued.length = 0;
   await resetDatabase(admin);
 });
 afterAll(async () => {
+  await nestApp.close();
   await admin.end();
   await pool.end();
 });
@@ -35,6 +37,15 @@ test('초안, 자동저장 충돌, 사진, 발행, 같은 슬러그 재발행, �
   const host = randomUUID();
   await insertUser(admin, host, false);
   const token = await accessToken(host);
+
+  const unauthorized = await readJson(await app.request('/v1/editor/session'));
+  expect(unauthorized.status).toBe(401);
+  expect(unauthorized.body).toEqual({ error: { code: 'unauthorized' } });
+  const invalidBearer = await readJson(
+    await app.request('/v1/editor/session', { headers: { authorization: 'Bearer invalid' } }),
+  );
+  expect(invalidBearer.status).toBe(401);
+  expect(invalidBearer.body).toEqual({ error: { code: 'unauthorized' } });
 
   const session = await readJson(await app.request('/v1/editor/session', { headers: auth(token) }));
   expect(session.body).toMatchObject({ userId: host, isAnonymous: false, showAds: false, plan: 'free' });
