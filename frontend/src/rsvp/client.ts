@@ -1,4 +1,5 @@
-import axios, { type AxiosInstance } from 'axios';
+import type { AxiosInstance } from 'axios';
+import { apiClient } from '@/api/createInstance';
 import type { RsvpContext, RsvpContextResult, RsvpResponse, RsvpSubmitBody, RsvpSubmitResult } from '@/domain/types';
 
 export interface RsvpClient {
@@ -30,10 +31,7 @@ export function browserStore(): MemoryStore {
   };
 }
 
-export const apiHttp = axios.create({
-  validateStatus: () => true,
-  headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
-});
+export const apiHttp = apiClient;
 
 export function createApiRsvpClient(baseUrl: string, http: AxiosInstance = apiHttp): RsvpClient {
   return {

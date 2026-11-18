@@ -1,7 +1,7 @@
 'use client';
 
-import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
+import { useRsvpContext, useSubmitRsvp } from '@/api/rsvp/query';
 import { eyebrows } from '@/content/copy';
 import { Icon } from '@/components/icon';
 import { deadlineCaption, isDeadlineClosed } from '@/domain/dates';
@@ -21,10 +21,9 @@ import {
   validateGuestName,
   type RsvpPhase,
 } from '@/domain/rsvp';
-import type { GuestLink, Invitation, RsvpResponse, RsvpSubmitBody } from '@/domain/types';
+import type { GuestLink, Invitation, RsvpResponse } from '@/domain/types';
 import { env } from '@/env';
 import { browserStore } from '@/rsvp/client';
-import { createRsvpClient } from '@/rsvp/create-client';
 
 export function RsvpSection({
   invitation,
@@ -39,7 +38,6 @@ export function RsvpSection({
   onMissing: () => void;
   onResolved?: () => void;
 }) {
-  const client = useRef(createRsvpClient()).current;
   const store = useRef(browserStore()).current;
   const [ready, setReady] = useState(false);
   const [unavailable, setUnavailable] = useState(false);
@@ -50,10 +48,7 @@ export function RsvpSection({
   const [response, setResponse] = useState<RsvpResponse | null>(null);
   const [editKey, setEditKey] = useState<string | undefined>();
   const token = link.channel === 'invite' ? undefined : link.token;
-  const contextQuery = useQuery({
-    queryKey: ['rsvp-context', invitation.slug, token ?? null],
-    queryFn: () => client.context({ slug: invitation.slug, token }),
-  });
+  const contextQuery = useRsvpContext(invitation.slug, token);
 
   useEffect(() => {
     if (contextQuery.isError) {
@@ -153,9 +148,8 @@ function RsvpForm({
   onRevoked: () => void;
   onMissing: () => void;
 }) {
-  const client = useRef(createRsvpClient()).current;
   const store = useRef(browserStore()).current;
-  const submitRsvp = useMutation({ mutationFn: (body: RsvpSubmitBody) => client.submit(body) });
+  const submitRsvp = useSubmitRsvp();
   const [response, setResponse] = useState(initialResponse);
   const [editKey, setEditKey] = useState(initialEditKey);
   const [phase, setPhase] = useState<RsvpPhase>(() =>
