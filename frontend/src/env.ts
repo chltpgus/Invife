@@ -10,6 +10,8 @@ export const env = {
   /** 카카오 지도 JavaScript 키. REST 키(로그인 client_id)는 쓰지 않는다. */
   kakaoMapKey: process.env.NEXT_PUBLIC_KAKAO_MAP_KEY ?? '',
   turnstileSiteKey: process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? '',
+  supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL ?? '',
+  supabaseAnonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '',
   dataSource: process.env.NEXT_PUBLIC_DATA_SOURCE === 'api' ? 'api' : 'fixture',
 } as const;
 

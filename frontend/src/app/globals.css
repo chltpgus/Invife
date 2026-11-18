@@ -1,5 +1,6 @@
 @import 'tailwindcss';
 @config '../../tailwind.config.ts';
+@import './editor.css';
 
 @font-face {
   font-family: 'Noto Serif KR';
@@ -287,6 +288,9 @@
   }
   .scroll-hint {
     @apply mt-2 flex justify-center text-mute;
+  }
+  .sample-text {
+    color: var(--guest-text2);
   }
   .frame {
     @apply block h-full w-full bg-surface bg-cover bg-center;
