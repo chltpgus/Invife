@@ -3,3 +3,5 @@
 /i/:slug/g/:token/  /i/:slug/index.html   200
 /i/:slug/s/:token   /i/:slug/index.html   200
 /i/:slug/s/:token/  /i/:slug/index.html   200
+/edit/:id           /edit/local/index.html  200
+/edit/:id/          /edit/local/index.html  200

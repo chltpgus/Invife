@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import { notFound } from 'next/navigation';
 import { siteConfig } from '@/config';
-import { InvitationView } from '@/components/invitation-view';
+import InvitationView from '@/components/organisms/InvitationView';
 import { getGuestDataSource } from '@/data';
 import { ogDescription, resolveEndedAt } from '@/domain/dates';
 import { guestPath } from '@/domain/links';

@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { NotFoundView } from '@/components/ended-view';
+import NotFoundView from '@/components/molecules/NotFoundView';
 
 export const metadata: Metadata = {
   title: '초대장을 찾을 수 없어요',

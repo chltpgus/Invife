@@ -1,6 +1,5 @@
-import Link from 'next/link';
+import StartScreen from '@/components/organisms/StartScreen';
 import { getGuestDataSource } from '@/data';
-import { guestPath } from '@/domain/links';
 
 export default async function HomePage() {
   const source = getGuestDataSource();
@@ -8,24 +7,11 @@ export default async function HomePage() {
     (invitation) => invitation !== null,
   );
   return (
-    <main className="column home" data-theme="ivory">
-      <p className="eyebrow" aria-hidden="true">
-        Invife
-      </p>
-      <h1 className="heading">샘플 초대장</h1>
-      <ul>
-        {invitations.map((invitation) => (
-          <li key={invitation.slug}>
-            <p className="body-strong">
-              {invitation.groom.name} · {invitation.bride.name}
-            </p>
-            <Link href={guestPath(invitation.slug)}>{invitation.slug}</Link>
-          </li>
-        ))}
-        <li>
-          <Link href="/i/missing/">없는 초대장</Link>
-        </li>
-      </ul>
-    </main>
+    <StartScreen
+      samples={invitations.map((invitation) => ({
+        slug: invitation.slug,
+        label: `${invitation.groom.name} · ${invitation.bride.name}`,
+      }))}
+    />
   );
 }
