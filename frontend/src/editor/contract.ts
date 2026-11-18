@@ -161,3 +161,157 @@ export type PhotoStepResult =
   | { ok: false; code: 'failed'; message: string };
 
 export type PresignStep = { ok: true; result: PresignResult; invitation: EditorInvitation } | { ok: false; message: string };
+
+/** docs/api/editor-api-contract.md 2·3·5.4·7·9절. */
+
+export type EditorSession = {
+  userId: string;
+  isAnonymous: boolean;
+  isAdmin: boolean;
+  plan: 'free';
+  adsEnabled: boolean;
+  showAds: boolean;
+};
+
+export type EditorFailure = {
+  ok: false;
+  code: 'login_required' | 'validation' | 'forbidden' | 'claim_invalid' | 'not_found' | 'conflict' | 'failed' | 'unconfigured' | 'existing_account' | 'cancelled';
+  field?: string;
+  reason?: string;
+  message?: string;
+};
+
+export type KakaoLinkResult = { ok: true; mode: 'linked'; redirected: boolean } | EditorFailure;
+
+export type ClaimTicketResult = { ok: true; ticket: string; expiresAt: string } | EditorFailure;
+
+export type ClaimDraftsResult = { ok: true; invitations: Array<{ id: string; slug: string }> } | EditorFailure;
+
+export type StaticRebuild = {
+  id: string;
+  action: 'publish' | 'apply' | 'unpublish' | 'delete';
+  slug: string;
+  revision: number;
+  pagePath: string;
+  documentPath: string;
+};
+
+export type InvitationActionResult = { ok: true; invitation: EditorInvitation; staticRebuild: StaticRebuild } | EditorFailure;
+
+export type DeleteInvitationResult = { ok: true; staticRebuild?: StaticRebuild } | EditorFailure;
+
+export type AppSettings = {
+  adsEnabled: boolean;
+  plan: 'free';
+  showAds: boolean;
+  canEditAds: boolean;
+};
+
+export type AppSettingsResult = { ok: true; settings: AppSettings } | EditorFailure;
+
+export type InvitationSettings = {
+  id: string;
+  slug: string;
+  slugEditable: false;
+  status: InvitationStatus;
+  purgeAt: string | null;
+  links: { invitePath: string; rsvpLinkPath: string | null };
+  rsvp: {
+    enabled: true;
+    deadline: string | null;
+    deadlineOverride: boolean;
+    publicLinkEnabled: boolean;
+  };
+};
+
+export type InvitationSettingsPatch = {
+  rsvp?: { deadline?: string | null; enabled?: boolean };
+  slug?: string;
+  publicLinkEnabled?: boolean;
+};
+
+export type InvitationSettingsResult = { ok: true; settings: InvitationSettings; etag: string } | EditorFailure;
+
+export type Recipient = {
+  id: string;
+  name: string;
+  revoked: boolean;
+  path: string | null;
+  response: { attending: boolean; companions: number; name: string | null; updatedAt: string } | null;
+};
+
+export type RecipientMutationResult = { ok: true; recipients: Recipient[] } | EditorFailure;
+
+export type PublicRsvpRow = {
+  id: string;
+  channel: 'invite' | 'rsvp_link';
+  name: string;
+  attending: boolean;
+  companions: number;
+  updatedAt: string;
+  duplicateName: boolean;
+};
+
+export type ChannelTotals = {
+  attendingResponses: number;
+  companionSum: number;
+  attendingGuests: number;
+  declined: number;
+  unanswered: number | null;
+};
+
+export type RsvpDashboard = {
+  deadline: string | null;
+  closed: boolean;
+  totals: ChannelTotals;
+  byChannel: { personal: ChannelTotals; invite: ChannelTotals; rsvp_link: ChannelTotals };
+  byRecipient: Array<{
+    recipientId: string;
+    channel: 'personal';
+    listName: string;
+    responseName: string | null;
+    status: 'unanswered' | 'attending' | 'declined';
+    revoked: boolean;
+    companions: number;
+    updatedAt: string | null;
+    path: string | null;
+  }>;
+  byPublicLink: { invite: PublicRsvpRow[]; rsvpLink: PublicRsvpRow[] };
+};
+
+export type RsvpDashboardResult = { ok: true; dashboard: RsvpDashboard } | EditorFailure;
+
+export type HostNotice = {
+  id: string;
+  invitationId: string;
+  kind: 'purge_soon';
+  purgeAt: string;
+  message: string;
+};
+
+export const CLAIM_TICKET_KEY = 'invife:claim-ticket';
+export const CLAIM_ASK_KEY = 'invife:claim-ask';
+export const PUBLISH_AFTER_LOGIN_KEY = 'invife:publish-after-login';
+export const FLASH_TOAST_KEY = 'invife:toast';
+
+export const ALREADY_LINKED_MESSAGES = ['Identity is already linked to another user', 'Identity is already linked'] as const;
+
+/** 콜백 오류가 이 두 문장일 때만 익명 세션이 남고, 그 다음에만 기존 계정 로그인을 한다. */
+export function alreadyLinkedMessage(value: string | null | undefined): boolean {
+  if (!value) return false;
+  let text = value;
+  try {
+    text = decodeURIComponent(value.replace(/\+/g, ' '));
+  } catch {
+    text = value;
+  }
+  return ALREADY_LINKED_MESSAGES.some((item) => text.includes(item));
+}
+
+export function callbackAlreadyLinked(): boolean {
+  if (typeof window === 'undefined') return false;
+  return [window.location.search, window.location.hash].some((source) => {
+    const params = new URLSearchParams(source.replace(/^[#?]/, ''));
+    return alreadyLinkedMessage(params.get('error_description') ?? params.get('error'));
+  });
+}

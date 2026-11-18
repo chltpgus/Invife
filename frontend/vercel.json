@@ -4,8 +4,18 @@
     { "source": "/i/:slug/g/:token/", "destination": "/i/:slug/index.html" },
     { "source": "/i/:slug/s/:token", "destination": "/i/:slug/index.html" },
     { "source": "/i/:slug/s/:token/", "destination": "/i/:slug/index.html" },
+    { "source": "/edit/:id/publish", "destination": "/edit/local/publish/index.html" },
+    { "source": "/edit/:id/publish/", "destination": "/edit/local/publish/index.html" },
+    { "source": "/edit/:id/published", "destination": "/edit/local/published/index.html" },
+    { "source": "/edit/:id/published/", "destination": "/edit/local/published/index.html" },
     { "source": "/edit/:id", "destination": "/edit/local/index.html" },
-    { "source": "/edit/:id/", "destination": "/edit/local/index.html" }
+    { "source": "/edit/:id/", "destination": "/edit/local/index.html" },
+    { "source": "/dashboard/:id/guests", "destination": "/dashboard/local/guests/index.html" },
+    { "source": "/dashboard/:id/guests/", "destination": "/dashboard/local/guests/index.html" },
+    { "source": "/dashboard/:id/rsvp", "destination": "/dashboard/local/rsvp/index.html" },
+    { "source": "/dashboard/:id/rsvp/", "destination": "/dashboard/local/rsvp/index.html" },
+    { "source": "/dashboard/:id/settings", "destination": "/dashboard/local/settings/index.html" },
+    { "source": "/dashboard/:id/settings/", "destination": "/dashboard/local/settings/index.html" }
   ],
   "headers": [
     {

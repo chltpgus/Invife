@@ -6,6 +6,7 @@ import { kstToday } from '@/domain/editor';
 import { useCreateInvitation } from '@/domain/editor/query';
 import { isTheme } from '@/editor/themes';
 import type { ThemeId } from '@/domain/types';
+import AdSlot from '@/components/molecules/AdSlot';
 import ThemePicker from '@/components/molecules/ThemePicker';
 
 const NewScreen = () => {
@@ -83,6 +84,7 @@ function NewForm() {
           <button type="button" className="ed-btn-text" disabled={createInvitation.isPending} onClick={() => void start(true)}>
             건너뛰고 시작
           </button>
+          <AdSlot />
         </div>
       </div>
     </main>
