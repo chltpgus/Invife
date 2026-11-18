@@ -62,7 +62,14 @@ jobs:
             fi
             sudo -u postgres psql -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN CREATE ROLE ubuntu WITH SUPERUSER LOGIN; EXCEPTION WHEN duplicate_object THEN ALTER ROLE ubuntu WITH SUPERUSER LOGIN; END \$\$;"
             sudo -u postgres psql -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN CREATE ROLE invife_app WITH LOGIN PASSWORD 'invife_app' NOINHERIT; EXCEPTION WHEN duplicate_object THEN ALTER ROLE invife_app WITH LOGIN PASSWORD 'invife_app' NOINHERIT; END \$\$;"
-            sudo chown -R ubuntu:ubuntu .
+            # 러너 작업 디렉터리는 ubuntu 사용자가 통과하지 못한다.
+            dir="$GITHUB_WORKSPACE"
+            while [[ "$dir" != "/" ]]; do
+              sudo chmod a+rx "$dir"
+              dir="$(dirname "$dir")"
+            done
+            sudo chown -R ubuntu:ubuntu "$GITHUB_WORKSPACE"
             sudo -u ubuntu env PATH="$PATH" npm test
+            sudo chown -R "$(id -un):$(id -gn)" "$GITHUB_WORKSPACE"
           fi
           npm run build --if-present
