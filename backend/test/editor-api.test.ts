@@ -178,7 +178,7 @@ test('초안, 자동저장 충돌, 사진, 발행, 같은 슬러그 재발행, �
       body: JSON.stringify({ confirm: '삭제' }),
     }),
   );
-  expect(removed.body).toEqual({ ok: true });
+  expect(removed.body).toMatchObject({ ok: true, staticRebuild: { action: 'delete', slug: publishedInvitation.slug } });
   expect((await readJson(await app.request(`/v1/invitations/${publishedInvitation.slug}`))).status).toBe(404);
   expect(current.updatedAt).toBeTruthy();
 });

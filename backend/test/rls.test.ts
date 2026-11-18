@@ -91,6 +91,46 @@ test('익명 사용자는 명단을 보지 못하고 하객 응답은 직접 넣
   ).rejects.toMatchObject({ code: '42501' });
 });
 
+test('정적 재생성 큐는 소유자와 app_metadata 어드민만 본다', async () => {
+  const owner = randomUUID();
+  const other = randomUUID();
+  await insertUser(admin, owner);
+  await insertUser(admin, other);
+  const invitation = randomUUID();
+  await admin.query(
+    `insert into invitations (id, owner_id, slug, groom_name) values ($1, $2, 'rebuildslug', '김신랑')`,
+    [invitation, owner],
+  );
+  await admin.query(
+    `insert into static_rebuilds (invitation_id, owner_id, slug, action, revision, page_path, document_path)
+     values ($1, $2, 'rebuildslug', 'publish', 1, '/i/rebuildslug/', '/v1/invitations/rebuildslug')`,
+    [invitation, owner],
+  );
+
+  const own = await asUser(owner, { app_metadata: {} }, (client) => client.query('select slug from static_rebuilds'));
+  expect(own.rows.map((row) => row.slug)).toEqual(['rebuildslug']);
+
+  const hidden = await asUser(other, { user_metadata: { role: 'admin' }, app_metadata: {} }, (client) =>
+    client.query('select slug from static_rebuilds'),
+  );
+  expect(hidden.rows).toHaveLength(0);
+
+  const adminView = await asUser(other, { app_metadata: { role: 'admin' } }, (client) =>
+    client.query('select slug from static_rebuilds'),
+  );
+  expect(adminView.rows.map((row) => row.slug)).toEqual(['rebuildslug']);
+
+  await expect(
+    asUser(owner, { app_metadata: {} }, (client) =>
+      client.query(
+        `insert into static_rebuilds (invitation_id, owner_id, slug, action, revision, page_path, document_path)
+         values ($1, $2, 'rebuildslug', 'apply', 2, '/i/rebuildslug/', '/v1/invitations/rebuildslug')`,
+        [invitation, owner],
+      ),
+    ),
+  ).rejects.toMatchObject({ code: '42501' });
+});
+
 test('anon 역할에는 테이블 권한이 없다', async () => {
   const client = await app.connect();
   try {

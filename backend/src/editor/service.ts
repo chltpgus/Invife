@@ -1,5 +1,5 @@
-import { randomUUID } from 'node:crypto';
-import type { AuthClaims } from '../auth/jwt';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
+import { bearer, type AuthClaims } from '../auth/jwt';
 import type { Config } from '../config';
 import type { Database, DatabaseClient } from '../db';
 import { withService, withUser } from '../db';
@@ -188,7 +188,7 @@ export async function autosave(deps: EditorDeps, claims: AuthClaims, id: string,
 
 export async function publish(deps: EditorDeps, claims: AuthClaims, id: string) {
   if (claims.isAnonymous) throw new HttpError(403, 'forbidden', { reason: 'login_required' });
-  await withUser(deps.pool, claims, async (client) => {
+  const staticRebuild = await withUser(deps.pool, claims, async (client) => {
     const row = await loadRow(client, id);
     assertReadyToPublish(row);
     const deadline = await deadlineOf(client, row);
@@ -196,40 +196,45 @@ export async function publish(deps: EditorDeps, claims: AuthClaims, id: string) 
     const document = buildPublicInvitation(toWorking(row), deadline);
     const hash = tokenHash(linkToken(deps.config.linkSecret, sharedMaterial(row.id, row.sharedLinkVersion)));
     await client.query('select public.publish_invitation($1, $2::jsonb, $3)', [id, JSON.stringify(document), hash]);
+    return recordRebuild(client, id, 'publish');
   });
-  return getInvitation(deps, claims, id);
+  return { ...(await getInvitation(deps, claims, id)), staticRebuild };
 }
 
 export async function applyChanges(deps: EditorDeps, claims: AuthClaims, id: string) {
   if (claims.isAnonymous) throw new HttpError(403, 'forbidden', { reason: 'login_required' });
-  await withUser(deps.pool, claims, async (client) => {
+  const staticRebuild = await withUser(deps.pool, claims, async (client) => {
     const row = await loadRow(client, id);
     assertReadyToPublish(row);
     const deadline = await deadlineOf(client, row);
     if (!deadline) throw new HttpError(400, 'validation', { field: 'ceremony.date', reason: 'required' });
     const document = buildPublicInvitation(toWorking(row), deadline);
     await client.query('select public.apply_invitation($1, $2::jsonb)', [id, JSON.stringify(document)]);
+    return recordRebuild(client, id, 'apply');
   });
-  return getInvitation(deps, claims, id);
+  return { ...(await getInvitation(deps, claims, id)), staticRebuild };
 }
 
 export async function unpublish(deps: EditorDeps, claims: AuthClaims, id: string) {
-  await withUser(deps.pool, claims, async (client) => {
+  const staticRebuild = await withUser(deps.pool, claims, async (client) => {
     await client.query('select public.unpublish_invitation($1)', [id]);
+    return recordRebuild(client, id, 'unpublish');
   });
-  return getInvitation(deps, claims, id);
+  return { ...(await getInvitation(deps, claims, id)), staticRebuild };
 }
 
 export async function removeInvitation(deps: EditorDeps, claims: AuthClaims, id: string, body: unknown) {
-  await withUser(deps.pool, claims, async (client) => {
+  const staticRebuild = await withUser(deps.pool, claims, async (client) => {
     const row = await loadRow(client, id);
     const confirm = isRecord(body) ? body.confirm : undefined;
     if (row.status !== 'draft' && confirm !== '삭제') {
       throw new HttpError(400, 'validation', { field: 'confirm', reason: 'required' });
     }
     await client.query('select public.soft_delete_invitation($1, $2)', [id, deps.now().toISOString()]);
+    if (claims.isAnonymous) return null;
+    return recordRebuild(client, id, 'delete');
   });
-  return { ok: true };
+  return staticRebuild ? { ok: true, staticRebuild } : { ok: true };
 }
 
 export async function presignPhoto(deps: EditorDeps, claims: AuthClaims, invitationId: string, body: unknown) {
@@ -496,37 +501,49 @@ export async function rsvpDashboard(deps: EditorDeps, claims: AuthClaims, invita
         .filter((item) => item.channel === channel)
         .map((item) => ({
           id: item.id,
+          channel,
           name: item.name,
           attending: item.attending,
           companions: item.companions,
           updatedAt: iso(item.updated_at),
           duplicateName: (nameCounts.get(`${channel}:${item.name}`) ?? 0) > 1,
         }));
-    const attending = publicRows.rows.filter((item) => item.attending);
-    const personalAttending = active.filter((item) => item.attending === true);
-    const allAttendingGuests =
-      personalAttending.reduce((sum, item) => sum + 1 + (item.companions ?? 0), 0) +
-      attending.reduce((sum, item) => sum + 1 + item.companions, 0);
-    const declined =
-      active.filter((item) => item.attending === false).length + publicRows.rows.filter((item) => !item.attending).length;
+    const personalAnswered = active
+      .filter((item) => item.attending !== null)
+      .map((item) => ({ attending: item.attending === true, companions: item.companions ?? 0 }));
+    const byChannel = {
+      personal: channelTotals(
+        personalAnswered,
+        active.length === 0 ? null : active.filter((item) => item.attending === null).length,
+      ),
+      invite: channelTotals(
+        toCount(publicRows.rows.filter((item) => item.channel === 'invite')),
+        null,
+      ),
+      rsvp_link: channelTotals(
+        toCount(publicRows.rows.filter((item) => item.channel === 'rsvp_link')),
+        null,
+      ),
+    };
     return {
       deadline,
       closed,
       totals: {
-        attendingResponses: personalAttending.length + attending.length,
-        companionSum:
-          personalAttending.reduce((sum, item) => sum + (item.companions ?? 0), 0) +
-          attending.reduce((sum, item) => sum + item.companions, 0),
-        attendingGuests: allAttendingGuests,
-        declined,
-        unanswered:
-          active.length === 0 ? null : active.filter((item) => item.attending === null).length,
+        attendingResponses:
+          byChannel.personal.attendingResponses + byChannel.invite.attendingResponses + byChannel.rsvp_link.attendingResponses,
+        companionSum: byChannel.personal.companionSum + byChannel.invite.companionSum + byChannel.rsvp_link.companionSum,
+        attendingGuests: byChannel.personal.attendingGuests + byChannel.invite.attendingGuests + byChannel.rsvp_link.attendingGuests,
+        declined: byChannel.personal.declined + byChannel.invite.declined + byChannel.rsvp_link.declined,
+        unanswered: byChannel.personal.unanswered,
       },
+      byChannel,
       byRecipient: recipients.rows.map((item) => ({
         recipientId: item.id,
+        channel: 'personal' as const,
         listName: item.name,
         responseName: item.response_name,
-        status: item.attending === null ? 'unanswered' : item.attending ? 'attending' : 'declined',
+        status: item.attending === null ? 'unanswered' as const : item.attending ? 'attending' as const : 'declined' as const,
+        revoked: Boolean(item.revoked_at),
         companions: item.companions ?? 0,
         updatedAt: item.updated_at ? iso(item.updated_at) : null,
         path: item.revoked_at
@@ -536,6 +553,81 @@ export async function rsvpDashboard(deps: EditorDeps, claims: AuthClaims, invita
       byPublicLink: { invite: toPublic('invite'), rsvpLink: toPublic('rsvp_link') },
       etag: await loadEtag(client, invitationId),
     };
+  });
+}
+
+export async function getSettings(deps: EditorDeps, claims: AuthClaims, id: string) {
+  requirePermanent(claims);
+  return withUser(deps.pool, claims, async (client) => {
+    const invitation = await loadInvitation(client, deps, id);
+    return { settings: toSettings(invitation), etag: invitation.etag };
+  });
+}
+
+export async function updateSettings(
+  deps: EditorDeps,
+  claims: AuthClaims,
+  id: string,
+  body: unknown,
+  ifMatch: string | undefined,
+) {
+  requirePermanent(claims);
+  if (!ifMatch) throw new HttpError(400, 'validation', { field: 'if-match', reason: 'required' });
+  const patch = parseSettings(body);
+  await withUser(deps.pool, claims, async (client) => {
+    const current = await loadRow(client, id);
+    if (etagValue(ifMatch) !== (await loadEtag(client, id))) {
+      throw new HttpError(409, 'conflict', { invitation: await present(client, deps, current) });
+    }
+    await applyPatch(client, current, patch);
+  });
+  return getSettings(deps, claims, id);
+}
+
+export async function readAppSettings(deps: EditorDeps, claims: AuthClaims) {
+  const flags = await readFlags(deps.pool, claims);
+  return presentAppSettings(flags.adsEnabled, claims.admin);
+}
+
+export async function updateAppSettings(deps: EditorDeps, claims: AuthClaims, body: unknown) {
+  if (!claims.admin) throw new HttpError(403, 'forbidden', { reason: 'admin_required' });
+  if (!isRecord(body) || typeof body.adsEnabled !== 'boolean') {
+    throw new HttpError(400, 'validation', { field: 'adsEnabled', reason: 'invalid' });
+  }
+  await withUser(deps.pool, claims, async (client) => {
+    await client.query('select public.set_ads_enabled($1)', [body.adsEnabled]);
+  });
+  return readAppSettings(deps, claims);
+}
+
+export async function listStaticRebuilds(deps: EditorDeps, authorization: string | undefined, limitRaw: unknown) {
+  assertRebuildToken(deps, authorization);
+  return withService(deps.pool, async (client) => {
+    const result = await client.query<{ list_static_rebuilds: unknown }>(
+      'select private.list_static_rebuilds($1) as list_static_rebuilds',
+      [parseRebuildLimit(limitRaw)],
+    );
+    return { rebuilds: result.rows[0]?.list_static_rebuilds ?? [] };
+  });
+}
+
+export async function ackStaticRebuilds(deps: EditorDeps, authorization: string | undefined, body: unknown) {
+  assertRebuildToken(deps, authorization);
+  if (!isRecord(body) || !Array.isArray(body.ids) || body.ids.length < 1 || body.ids.length > 100) {
+    throw new HttpError(400, 'validation', { field: 'ids', reason: 'required' });
+  }
+  const ids = body.ids.map((id) => {
+    if (typeof id !== 'string' || !/^[0-9a-f-]{36}$/i.test(id)) {
+      throw new HttpError(400, 'validation', { field: 'ids', reason: 'invalid' });
+    }
+    return id;
+  });
+  return withService(deps.pool, async (client) => {
+    const result = await client.query<{ ack_static_rebuilds: number }>(
+      'select private.ack_static_rebuilds($1::uuid[]) as ack_static_rebuilds',
+      [ids],
+    );
+    return { acked: result.rows[0]?.ack_static_rebuilds ?? 0 };
   });
 }
 
@@ -662,6 +754,115 @@ async function listRecipients(deps: EditorDeps, claims: AuthClaims, invitationId
 
 function guestPath(slug: string, token: string): string {
   return `/i/${slug}/g/${token}/`;
+}
+
+type ChannelCount = { attending: boolean; companions: number };
+
+function toCount(rows: Array<{ attending: boolean; companions: number }>): ChannelCount[] {
+  return rows.map((item) => ({ attending: item.attending, companions: item.companions }));
+}
+
+function channelTotals(rows: ChannelCount[], unanswered: number | null) {
+  const attending = rows.filter((item) => item.attending);
+  return {
+    attendingResponses: attending.length,
+    companionSum: attending.reduce((sum, item) => sum + item.companions, 0),
+    attendingGuests: attending.reduce((sum, item) => sum + 1 + item.companions, 0),
+    declined: rows.length - attending.length,
+    unanswered,
+  };
+}
+
+type PresentedInvitation = Awaited<ReturnType<typeof present>>;
+
+function toSettings(invitation: PresentedInvitation) {
+  return {
+    id: invitation.id,
+    slug: invitation.slug,
+    slugEditable: false as const,
+    status: invitation.status,
+    purgeAt: invitation.purgeAt,
+    links: invitation.links,
+    rsvp: {
+      enabled: true as const,
+      deadline: invitation.rsvp.deadline,
+      deadlineOverride: invitation.rsvp.deadlineOverride,
+      publicLinkEnabled: invitation.status === 'published' && invitation.links.rsvpLinkPath !== null,
+    },
+  };
+}
+
+function presentAppSettings(adsEnabled: boolean, admin: boolean) {
+  const plan = 'free' as const;
+  return {
+    adsEnabled,
+    plan,
+    showAds: adsEnabled && !admin && plan === 'free',
+    canEditAds: admin,
+  };
+}
+
+function requirePermanent(claims: AuthClaims) {
+  if (claims.isAnonymous) throw new HttpError(403, 'forbidden', { reason: 'login_required' });
+}
+
+function parseSettings(body: unknown): Patch {
+  if (!isRecord(body)) throw new HttpError(400, 'validation');
+  if ('slug' in body) throw new HttpError(400, 'validation', { field: 'slug', reason: 'not_supported' });
+  if (!isRecord(body.rsvp)) throw new HttpError(400, 'validation', { field: 'rsvp', reason: 'required' });
+  if ('enabled' in body.rsvp && body.rsvp.enabled !== true) {
+    throw new HttpError(400, 'validation', { field: 'rsvp.enabled', reason: 'not_supported' });
+  }
+  if ('publicLinkEnabled' in body.rsvp) {
+    throw new HttpError(400, 'validation', { field: 'rsvp.publicLinkEnabled', reason: 'not_supported' });
+  }
+  if (!('deadline' in body.rsvp)) throw new HttpError(400, 'validation', { field: 'rsvp.deadline', reason: 'required' });
+  return { rsvp: rsvpPatch(body.rsvp) };
+}
+
+type StaticRebuild = {
+  id: string;
+  action: 'publish' | 'apply' | 'unpublish' | 'delete';
+  slug: string;
+  revision: number;
+  pagePath: string;
+  documentPath: string;
+};
+
+async function recordRebuild(
+  client: DatabaseClient,
+  id: string,
+  action: StaticRebuild['action'],
+): Promise<StaticRebuild> {
+  const result = await client.query<{ record_static_rebuild: StaticRebuild }>(
+    'select public.record_static_rebuild($1, $2) as record_static_rebuild',
+    [id, action],
+  );
+  const rebuild = result.rows[0]?.record_static_rebuild;
+  if (!rebuild?.id) throw new HttpError(503, 'unavailable');
+  return rebuild;
+}
+
+function parseRebuildLimit(value: unknown): number {
+  if (value === undefined || value === null || value === '') return 50;
+  const parsed = typeof value === 'string' ? Number(value) : typeof value === 'number' ? value : NaN;
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 100) {
+    throw new HttpError(400, 'validation', { field: 'limit', reason: 'invalid' });
+  }
+  return parsed;
+}
+
+function assertRebuildToken(deps: EditorDeps, authorization: string | undefined) {
+  const expected = deps.config.rebuildToken;
+  if (!expected) throw new HttpError(404, 'not_found');
+  const presented = bearer(authorization);
+  if (!presented || !sameSecret(presented, expected)) throw new HttpError(401, 'unauthorized');
+}
+
+function sameSecret(left: string, right: string): boolean {
+  const a = createHash('sha256').update(left).digest();
+  const b = createHash('sha256').update(right).digest();
+  return timingSafeEqual(a, b);
 }
 
 async function assertRecipient(client: DatabaseClient, invitationId: string, recipientId: string) {

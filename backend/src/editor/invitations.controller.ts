@@ -12,6 +12,16 @@ export class InvitationsController {
     return this.service.session(claims(request));
   }
 
+  @Get('settings')
+  appSettings(@Req() request: AuthenticatedRequest) {
+    return this.service.appSettings(claims(request));
+  }
+
+  @Patch('settings')
+  updateAppSettings(@Req() request: AuthenticatedRequest, @Body() body: unknown) {
+    return this.service.updateAppSettings(claims(request), body);
+  }
+
   @Get('notices')
   notices(@Req() request: AuthenticatedRequest) {
     return this.service.notices(claims(request));
@@ -58,6 +68,21 @@ export class InvitationsController {
   @HttpCode(200)
   unpublish(@Req() request: AuthenticatedRequest, @Param('id') id: string) {
     return this.service.unpublish(claims(request), id);
+  }
+
+  @Get('invitations/:id/settings')
+  settings(@Req() request: AuthenticatedRequest, @Param('id') id: string) {
+    return this.service.settings(claims(request), id);
+  }
+
+  @Patch('invitations/:id/settings')
+  updateSettings(
+    @Req() request: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @Headers('if-match') ifMatch?: string,
+  ) {
+    return this.service.updateSettings(claims(request), id, body, ifMatch);
   }
 
   @Delete('invitations/:id')

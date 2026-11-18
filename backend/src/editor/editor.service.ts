@@ -29,6 +29,12 @@ export class EditorService {
   apply(claims: AuthClaims, id: string) { return editor.applyChanges(this.deps, claims, id); }
   unpublish(claims: AuthClaims, id: string) { return editor.unpublish(this.deps, claims, id); }
   remove(claims: AuthClaims, id: string, body: unknown) { return editor.removeInvitation(this.deps, claims, id, body); }
+  settings(claims: AuthClaims, id: string) { return editor.getSettings(this.deps, claims, id); }
+  updateSettings(claims: AuthClaims, id: string, body: unknown, ifMatch?: string) {
+    return editor.updateSettings(this.deps, claims, id, body, ifMatch);
+  }
+  appSettings(claims: AuthClaims) { return editor.readAppSettings(this.deps, claims); }
+  updateAppSettings(claims: AuthClaims, body: unknown) { return editor.updateAppSettings(this.deps, claims, body); }
   rsvp(claims: AuthClaims, id: string) { return editor.rsvpDashboard(this.deps, claims, id); }
   addRecipients(claims: AuthClaims, id: string, body: unknown) { return editor.addRecipients(this.deps, claims, id, body); }
   renameRecipient(claims: AuthClaims, id: string, recipientId: string, body: unknown) {
@@ -42,4 +48,10 @@ export class EditorService {
   }
   issueClaim(claims: AuthClaims, body: unknown) { return editor.issueClaim(this.deps, claims, body); }
   claimDrafts(claims: AuthClaims, body: unknown) { return editor.claimDrafts(this.deps, claims, body); }
+  listRebuilds(authorization: string | undefined, limit: unknown) {
+    return editor.listStaticRebuilds(this.deps, authorization, limit);
+  }
+  ackRebuilds(authorization: string | undefined, body: unknown) {
+    return editor.ackStaticRebuilds(this.deps, authorization, body);
+  }
 }

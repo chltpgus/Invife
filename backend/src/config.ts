@@ -9,6 +9,8 @@ export type Config = {
   turnstileSecret: string;
   turnstileHostname: string;
   kakaoEmailWebhook: string;
+  /** 비우면 GET /v1/rebuilds 는 404. 브라우저에 넣지 않는다. */
+  rebuildToken: string;
   r2: {
     accountId: string;
     accessKeyId: string;
@@ -57,6 +59,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     turnstileSecret: env.TURNSTILE_SECRET_KEY ?? '',
     turnstileHostname: env.TURNSTILE_HOSTNAME ?? '',
     kakaoEmailWebhook: env.KAKAO_EMAIL_WEBHOOK ?? '',
+    rebuildToken: env.STATIC_REBUILD_TOKEN ?? '',
     r2: r2Ready ? { accountId, accessKeyId, secretAccessKey, bucket } : null,
     limits: {
       contextPerMinute: num(env.RATE_LIMIT_CONTEXT_PER_MINUTE, 60),
