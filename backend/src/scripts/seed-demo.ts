@@ -61,6 +61,14 @@ await client.query(
   [recipient, invitationId, tokenHash(personal)],
 );
 await client.query(
+  `insert into rsvp_responses (invitation_id, recipient_id, channel, name, attending, companions)
+   select $1, r.id, 'personal', r.name, true, 1
+   from recipients r
+   where r.id = $2
+     and not exists (select 1 from rsvp_responses x where x.recipient_id = r.id)`,
+  [invitationId, recipient],
+);
+await client.query(
   `update invitations set published_document = $2::jsonb where id = $1 and published_document is null`,
   [
     invitationId,
@@ -87,5 +95,7 @@ console.log(JSON.stringify({
   invitePath: `/i/${slug}/`,
   personalToken: personal,
   sharedToken: shared,
-  note: '토큰 원문은 이 출력에만 있다. DB 에는 해시만 있다.',
+  personalPath: `/i/${slug}/g/${personal}/`,
+  rsvpLinkPath: `/i/${slug}/s/${shared}/`,
+  note: '토큰 원문은 이 출력에만 있다. DB 에는 SHA-256 만 있다. 하객 HTML 에는 이름을 넣지 않는다.',
 }, null, 2));

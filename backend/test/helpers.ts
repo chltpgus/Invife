@@ -33,6 +33,7 @@ export async function resetDatabase(admin: pg.Pool): Promise<void> {
       public.invitation_photos,
       public.invitation_families,
       public.invitation_accounts,
+      public.static_rebuilds,
       public.host_notices,
       public.invitations,
       private.rate_limits,
@@ -93,6 +94,7 @@ export function testConfig(overrides: Partial<Config> = {}): Config {
     turnstileSecret: '',
     turnstileHostname: '',
     kakaoEmailWebhook: '',
+    rebuildToken: '',
     r2: null,
     ...overrides,
     limits: {

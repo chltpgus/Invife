@@ -78,6 +78,7 @@ npm run dev
 | `TURNSTILE_SECRET_KEY` | 비우면 로컬에서 검사를 생략. 운영에서는 필수 |
 | `R2_*` | 넷이 모두 있으면 서명 URL. 아니면 `PUT /v1/editor/uploads/:token` |
 | `KAKAO_EMAIL_WEBHOOK` | 비우면 삭제 안내 메일은 outbox에 `skipped` |
+| `STATIC_REBUILD_TOKEN` | 정적 재생성 워커의 Bearer. 비우면 `GET /v1/rebuilds` 는 404. 브라우저에 넣지 않는다 |
 | `CORS_ORIGINS` | 쉼표로 구분. `Retry-After`를 노출한다 |
 | `RATE_LIMIT_*` | 비우면 계약의 기본 횟수 |
 
@@ -87,7 +88,7 @@ npm run dev
 
 - `src/app.module.ts`, `src/app.ts`: 루트 모듈, CORS, 전역 guard/interceptor/filter, 애플리케이션 생성
 - `src/guest/guest.module.ts`: 하객 `rsvp-context`·RSVP controller/service
-- `src/editor/editor.module.ts`: 세션, 초대장, 자동 저장, 발행, 명단 controller/service
+- `src/editor/editor.module.ts`: 세션, 초대장, 자동 저장, 발행, 설정, 명단, 정적 재생성 큐 controller/service
 - `src/photos/photos.module.ts`: 업로드, 비동기 변환, 사진 상태 controller/service
 - `src/public-invitations/public-invitations.module.ts`: 인증 없는 공개 목록·상세
 - `src/shared/auth.guard.ts`: Supabase Bearer JWT와 익명 세션 검증. 어드민 판단은 기존 DB 경계의 `app_metadata.role`
@@ -143,7 +144,20 @@ select cron.schedule(
 
 ## 광고·지출
 
-`showAds = ads_enabled && !admin && plan === 'free'`. `ads_enabled` 기본값은 false라 광고 스크립트는 나가지 않는다. `plan`은 항상 `free`다. 결제는 없다.
+`showAds = ads_enabled && !admin && plan === 'free'`. `ads_enabled` 기본값은 false라 광고 스크립트는 나가지 않는다. `plan`은 항상 `free`다. 결제는 없다. 전역 스위치는 `PATCH /v1/editor/settings` 이고 `app_metadata.role = 'admin'` 만 바꿀 수 있다.
+
+## 카카오 로그인
+
+에디터 세션은 이 서버가 만들지 않는다. 브라우저는 Supabase Auth 를 직접 쓴다.
+
+1. 대시보드에서 Anonymous sign-ins 와 Manual linking(베타)을 켠다. 로컬은 `supabase/config.toml` 의 `enable_anonymous_sign_ins`, `enable_manual_linking` 이다. 셀프 호스트 Manual linking 은 `GOTRUE_SECURITY_MANUAL_LINKING_ENABLED=true`.
+2. Kakao provider 를 켠다. `client_id` 는 카카오 REST API 키(로그인용)다. 브라우저 번들에 넣지 않는다. 리다이렉트 URI 는 `https://<project>.supabase.co/auth/v1/callback` 이다. 추가 허용 주소에 프론트 `/edit/{id}/publish` 를 넣는다.
+3. 이 서버의 `SUPABASE_JWT_SECRET` 은 Auth 가 HS256 으로 서명하는 레거시 JWT secret 과 같아야 한다. 비대칭 signing key 만 켠 프로젝트는 이 서버가 검증하지 않는다.
+4. 익명 초안을 잇는 순서와, 이미 가입된 카카오 계정의 claim 티켓은 [`docs/api/editor-api-contract.md`](../docs/api/editor-api-contract.md) 3.2 다.
+
+## 정적 초대장
+
+발행·반영·발행 취소·삭제는 `static_rebuilds` 에 한 줄 남기고 응답에 `staticRebuild` 를 준다. 워커는 `STATIC_REBUILD_TOKEN` 으로 `GET /v1/rebuilds` 를 보고 공개 JSON 을 받아 `/i/{slug}/index.html` 을 다시 쓴 뒤 `POST /v1/rebuilds/ack` 한다. 하객 HTML 은 DB 를 읽지 않는다. 절차는 제작자 계약 8.1 이다.
 
 `spend_cap_cents`가 null이면 막지 않는다. 값을 두면 월 추정 비용이 상한 이상일 때 초안 생성과 사진 서명이 `503 spend_cap`이다. RSVP는 막지 않는다. 50/80/100%에서 `budget_alerts`에 한 번씩 남긴다. 이 카운터는 클라우드 청구서를 대체하지 않는다. Supabase와 R2 결제 알림을 따로 켠다.
 

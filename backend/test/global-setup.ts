@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { readdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -21,9 +21,12 @@ export default async function setup() {
   const db = new pg.Client({ host: '/var/run/postgresql', user: 'ubuntu', database: 'invife_test' });
   await db.connect();
   const stub = await readFile(path.join(root, 'supabase/testing/auth-stub.sql'), 'utf8');
-  const migration = await readFile(path.join(root, 'supabase/migrations/20261117143000_init.sql'), 'utf8');
   await db.query(stub);
-  await db.query(migration);
+  const migrationDir = path.join(root, 'supabase/migrations');
+  const migrations = (await readdir(migrationDir)).filter((name) => name.endsWith('.sql')).sort();
+  for (const name of migrations) {
+    await db.query(await readFile(path.join(migrationDir, name), 'utf8'));
+  }
   await db.end();
 
   const databaseUrl = 'postgres://invife_app:invife_app@127.0.0.1:5432/invife_test';
