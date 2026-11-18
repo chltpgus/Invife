@@ -3,7 +3,7 @@
 - 상태: **초안.** 프론트와 맞춰 가는 문서다. 구현은 이 문서를 따른다.
 - 기준: [`editor-spec.md`](../design/editor-spec.md), [`mvp-plan.md`](../planning/mvp-plan.md), [`guest-data-contract.md`](./guest-data-contract.md). 하객 계약과 어긋나면 하객 계약이 이긴다.
 - 소비처: 제작 화면 `/new`, `/edit/[id]`, `/dashboard`. 하객 페이지는 이 API를 부르지 않는다.
-- 기준일: 2026-11-17.
+- 기준일: 2026-11-18.
 
 인증은 Supabase Auth 다. 데이터 API는 같은 오리진의 Node 서버다. 사진 변환(sharp)과 Turnstile 때문에 Supabase Edge Function 이 아니라 Node 로 둔다. 경로는 하객 클라이언트가 이미 쓰는 `{API_BASE}` 와 같다.
 
@@ -39,7 +39,7 @@ type ApiError = {
 |---|---|---|
 | 400 | `validation` | 형식·길이·필수값. `field` 는 `groom.name` 처럼 점 경로 |
 | 401 | `unauthorized` | 토큰 없음·만료·서명 불일치 |
-| 403 | `forbidden` | 소유자가 아님, 익명이 발행·명단을 시도 |
+| 403 | `forbidden` | 소유자가 아님, 익명이 발행·명단·설정을 시도(`reason: "login_required"`), 광고 스위치를 어드민이 아닌 사용자가 시도(`reason: "admin_required"`) |
 | 403 | `claim_invalid` | 이전 티켓이 없거나 만료·사용됨 |
 | 404 | `not_found` | 없는 초대장, 남의 초대장(존재 여부를 숨김) |
 | 409 | `conflict` | 자동 저장 `If-Match` 가 서버의 현재 `etag` 와 다름. 본문에 현재 `invitation` 과 `etag` |
@@ -77,6 +77,24 @@ type EditorSession = {
 
 광고 스크립트는 이 API에 없다. 하객 `/i/*` 에는 넣지 않는다.
 
+### 2.1 광고 스위치
+
+`GET /v1/editor/settings` → 로그인한 사용자.
+
+```ts
+type AppSettings = {
+  adsEnabled: boolean;
+  plan: 'free';
+  showAds: boolean;
+  /** app_metadata.role === 'admin' 일 때만 true. user_metadata 는 무시한다. */
+  canEditAds: boolean;
+};
+```
+
+`PATCH /v1/editor/settings` `{ "adsEnabled": boolean }`
+
+어드민만. 그 외는 `403 forbidden`, `reason: "admin_required"`. `user_metadata.role` 은 어드민이 아니다. 성공하면 위 `AppSettings` 를 다시 준다. `showAds` 는 세션과 같은 식이고, 어드민 자신의 화면은 스위치를 켜도 `showAds: false` 다. 하객 페이지 스크립트는 이 값으로 넣지 않는다.
+
 ## 3. 로그인과 초안 이전
 
 프론트가 Supabase 클라이언트로 직접 한다. 이 API는 세션을 만들지 않는다.
@@ -93,19 +111,24 @@ type EditorSession = {
 
 ### 3.2 발행 직전, 카카오 계정으로 잇기
 
-1. 발행 직전, 익명이면 `linkIdentity({ provider: 'kakao' })`. 같은 사용자 id 가 영구 계정이 된다. 초대장 `owner_id` 는 그대로다.
-2. 그 카카오 계정이 **이미 있으면** `linkIdentity` 는 실패한다(Manual linking 은 베타이고, 이미 있는 identity 에는 붙지 않는다). 이때 익명 세션은 유지된다. 프론트는 다이얼로그 「이 카카오 계정은 이미 Invife에 가입돼 있어요. 이 초안을 그 계정으로 옮길까요?」를 띄운다.
+2026-11-18 공식 문서 기준이다. [Identity Linking](https://supabase.com/docs/guides/auth/auth-identity-linking) 은 Manual linking 을 아직 **베타**로 적는다. [Anonymous Sign-Ins](https://supabase.com/docs/guides/auth/auth-anonymous) 는 익명 사용자를 영구 사용자로 바꿀 때 `linkIdentity()` 를 쓰라고 하고, 그 identity 가 이미 다른 사용자에게 있으면 실패하니 기존 계정으로 로그인한 뒤 데이터를 옮기라고 한다. [`linkIdentity`](https://supabase.com/docs/reference/javascript/auth-linkidentity) 는 후보 identity 가 이미 이 사용자 또는 다른 사용자에게 붙어 있으면 실패한다. GoTrue 는 그때 `422` `identity_already_exists` 와 메시지 `Identity is already linked` 또는 `Identity is already linked to another user` 를 준다. supabase-js 는 그 두 메시지에 한해서 콜백 URL 의 오류로 기존 세션을 지우지 않는다. 다른 오류는 세션을 지울 수 있다. 카카오 provider 이름은 `kakao` 다. 네이티브 ID 토큰 연결(`linkIdentity({ provider: 'kakao', token })`)도 카카오를 지원하지만, 웹 에디터는 OAuth `linkIdentity({ provider: 'kakao' })` 를 쓴다.
+
+첫 연결에 `signInWithOAuth` 를 쓰면 안 된다. 그건 다른 사용자를 만들거나 기존 계정으로 들어가서, 익명 `owner_id` 가 그대로 남는다.
+
+1. 발행 직전, 익명이면 익명 세션에서 `linkIdentity({ provider: 'kakao', options: { redirectTo } })`. `redirectTo` 는 프론트 경로 `/edit/{id}/publish` 다. 프로젝트가 Manual linking 을 켜 두어야 한다(대시보드 Authentication 설정, 셀프 호스트는 `GOTRUE_SECURITY_MANUAL_LINKING_ENABLED=true`, 로컬 `backend/supabase/config.toml` 의 `enable_manual_linking`).
+2. 성공하면 **같은 사용자 id** 가 영구 계정이 되고 `is_anonymous` 가 false 가 된다. 프론트는 세션을 갱신한 뒤 그 access token 으로 발행한다. 초대장 `owner_id` 는 그대로다.
+3. 그 카카오 identity 가 **이미 있으면** `linkIdentity` 는 실패한다. 콜백의 오류 메시지가 위의 두 문장 중 하나일 때만 익명 세션이 유지된다. 프론트는 그 메시지를 보고 다이얼로그 「이 카카오 계정은 이미 Invife에 가입돼 있어요. 이 초안을 그 계정으로 옮길까요?」를 띄운다. 메시지를 확인하기 전에 `signInWithOAuth` 를 호출하지 않는다.
 
 옮기기:
 
-1. 아직 익명 세션인 동안 `POST /v1/editor/claim-tickets` `{ "invitationIds": ["..."] }` → `201 { "ticket": "<원문 한 번>", "expiresAt": "<15분>" }`. 티켓은 그 익명 사용자가 소유한 초안만 묶는다. 평문은 응답에만 있고 DB 에는 sha256 만 있다. `sessionStorage` 키 `invife:claim-ticket`.
-2. `signInWithOAuth({ provider: 'kakao' })` 로 기존 계정에 로그인한다. 리다이렉트 복귀 주소는 프론트 경로 `/edit/{id}/publish` 로 둔다.
-3. 영구 세션으로 `POST /v1/editor/drafts/claim` `{ "ticket": "..." }` → `200 { "invitations": [{ "id", "slug" }] }`. `owner_id` 가 바뀐다. 티켓은 1회용이다.
+1. 아직 익명 세션인 동안 `POST /v1/editor/claim-tickets` `{ "invitationIds": ["..."] }` → `201 { "ticket": "<원문 한 번>", "expiresAt": "<15분>" }`. 티켓은 그 익명 사용자가 소유한 초안만 묶는다. 평문은 응답에만 있고 DB 에는 sha256 만 있다. `sessionStorage` 키 `invife:claim-ticket`. 영구 세션이 호출하면 `403 forbidden`, `reason: "not_anonymous"`.
+2. `signInWithOAuth({ provider: 'kakao' })` 로 기존 계정에 로그인한다. 리다이렉트 복귀 주소는 `/edit/{id}/publish`. 이 호출이 익명 세션을 바꾼다. 그래서 티켓을 먼저 받는다.
+3. 영구 세션으로 `POST /v1/editor/drafts/claim` `{ "ticket": "..." }` → `200 { "invitations": [{ "id", "slug" }] }`. `owner_id` 가 바뀐다. 티켓은 1회용이다. 다시 쓰거나, 15분이 지났거나, 그 사이 소유자가 바뀌면 `403 claim_invalid`. 익명 세션으로 claim 하면 `403 forbidden`, `reason: "login_required"`.
 4. 이어서 발행한다.
 
 취소하면 아무것도 호출하지 않는다. 익명 초안은 그 브라우저에 남는다.
 
-대시보드의 「이미 만든 청첩장 보기」는 카카오 로그인만 하고 claim 을 하지 않는다.
+대시보드의 「이미 만든 청첩장 보기」는 카카오 로그인만 하고 claim 을 하지 않는다. 어드민은 로그인 뒤에도 `app_metadata.role = 'admin'` 만 본다. 카카오가 넣는 `user_metadata` 로 어드민이 되지 않는다.
 
 ## 4. 초대장 문서
 
@@ -328,15 +351,15 @@ type AutosaveBody = {
 
 `POST /v1/editor/invitations/:id/publish`
 
-초안이거나 발행 취소된 초대장을 공개한다. 영구 사용자만. 익명이면 `403 forbidden` + `reason: "login_required"`. 같은 `slug`. 공유 RSVP 토큰이 없으면 만든다. `200` `{ "invitation": EditorInvitation }`.
+초안이거나 발행 취소된 초대장을 공개한다. 영구 사용자만. 익명이면 `403 forbidden` + `reason: "login_required"`. 같은 `slug`. 공유 RSVP 토큰이 없으면 만든다. `200` `{ "invitation": EditorInvitation, "staticRebuild": StaticRebuild }`.
 
 `POST /v1/editor/invitations/:id/apply`
 
-발행 중인 문서의 하객 스냅샷을 작업 문서로 바꾼다. 영구 사용자만. `slug` 와 개인 링크는 유지. 마감을 이미 지난 시각으로 당기면 즉시 마감된다(확인 문구는 프론트). `200` 동일.
+발행 중인 문서의 하객 스냅샷을 작업 문서로 바꾼다. 영구 사용자만. `slug` 와 개인 링크는 유지. 발행 뒤에도 시간·장소·계좌를 포함한 필드를 고친 뒤 이 호출로 같은 링크의 정적 페이지를 다시 굽는다. 마감을 이미 지난 시각으로 당기면 즉시 마감된다(확인 문구는 프론트). `200` 동일.
 
 `POST /v1/editor/invitations/:id/unpublish`
 
-하객 GET 과 RSVP 가 `404`. 사진·응답·슬러그는 남는다. 다시 `publish` 하면 같은 링크다.
+하객 GET 과 RSVP 가 `404`. 사진·응답·슬러그는 남는다. 다시 `publish` 하면 같은 링크다. `200` 에 `staticRebuild.action` 은 `unpublish`.
 
 `DELETE /v1/editor/invitations/:id`
 
@@ -344,9 +367,68 @@ type AutosaveBody = {
 type DeleteBody = { confirm?: string };
 ```
 
-발행·발행 취소 상태는 본문 `confirm: "삭제"` 가 있어야 한다. 초안은 본문 없이 지운다. 즉시 `deleted`(공개 404). 행·R2 객체는 24시간 안에 하드 삭제한다.
+발행·발행 취소 상태는 본문 `confirm: "삭제"` 가 있어야 한다. 초안은 본문 없이 지운다. 즉시 `deleted`(공개 404). 행·R2 객체는 24시간 안에 하드 삭제한다. 영구 사용자의 삭제는 `{ "ok": true, "staticRebuild": StaticRebuild }` 다. 익명 초안 삭제는 공개 HTML 이 없으므로 `{ "ok": true }` 만 준다.
 
-발행은 정적 페이지를 직접 빌드하지 않는다. 공개 JSON 이 바뀌면 프론트·호스트가 ISR·재배포로 갱신한다(호스팅은 1주차 미결정). DB 가 죽어도 이미 올라간 HTML 은 CDN 에 남는다.
+```ts
+type StaticRebuild = {
+  id: string;
+  action: 'publish' | 'apply' | 'unpublish' | 'delete';
+  slug: string;
+  revision: number;
+  /** /i/{slug}/ */
+  pagePath: string;
+  /** /v1/invitations/{slug} */
+  documentPath: string;
+};
+```
+
+이 서버는 HTML 을 굽지 않는다. 성공 응답의 `staticRebuild` 와 8절 큐가, 프론트 빌드가 `/i/{slug}/index.html` 을 다시 만들 신호다. 하객 페이지는 그 정적 파일을 읽고, 요청 때 DB 를 보지 않는다. DB 가 죽어도 이미 CDN 에 있는 HTML 은 남는다. RSVP 만 `503` 이 될 수 있다.
+
+### 5.5 초대장 설정
+
+설정 화면(`/dashboard/[id]/settings`)이 읽는 값이다. editor-spec 11·6.2⑨·Q12·Q13 을 따른다. RSVP 를 끄는 스위치는 없다. 공용 RSVP 링크를 끄는 스위치도 없다. 슬러그는 사람이 고르지 못한다.
+
+`GET /v1/editor/invitations/:id/settings`
+
+영구 사용자만. 익명이면 `403 forbidden`, `reason: "login_required"`. 남의 초대장과 삭제된 초대장은 `404 not_found`.
+
+```ts
+type InvitationSettings = {
+  id: string;
+  slug: string;
+  /** 항상 false. Q13. 본문에 slug 를 넣으면 400. */
+  slugEditable: false;
+  status: InvitationStatus;
+  purgeAt: string | null;
+  links: {
+    invitePath: string;
+    /** 발행 중일 때만. 평문 토큰은 소유자 응답에만. */
+    rsvpLinkPath: string | null;
+  };
+  rsvp: {
+    /** 항상 true. false 를 보내면 field "rsvp.enabled", reason "not_supported". */
+    enabled: true;
+    deadline: string | null;
+    deadlineOverride: boolean;
+    /** 발행 중이고 공용 토큰이 있을 때만 true. 본문에 이 키를 넣으면 reason "not_supported". */
+    publicLinkEnabled: boolean;
+  };
+};
+```
+
+응답은 `{ "settings": InvitationSettings, "etag": string }` 이고 헤더 `ETag` 도 준다.
+
+`PATCH /v1/editor/invitations/:id/settings`
+
+`If-Match` 필수. 없으면 `400 validation`, `field: "if-match"`. 값이 다르면 `409 conflict` 와 현재 `invitation`(자동 저장과 같다).
+
+```ts
+type SettingsPatch = {
+  rsvp: { deadline: string | null; enabled?: true };
+};
+```
+
+`deadline: null` 은 덮어쓰기를 해제한다(예식 전날 23:59:59.999 KST). 예식 시작보다 늦으면 `field: "rsvp.deadline"`, `reason: "deadline_after_ceremony"`. 이 호출은 **작업 문서**만 바꾼다. 이미 발행된 스냅샷은 `apply` 전까지 유지되고, `hasUnpublishedChanges` 가 true 가 된다. 발행 취소·삭제는 5.4 의 `unpublish`·`DELETE` 다. 이 경로로 하지 않는다.
 
 ## 6. 사진
 
@@ -434,21 +516,39 @@ type Recipient = {
 `GET /v1/editor/invitations/:id/rsvp`
 
 ```ts
+type ChannelTotals = {
+  attendingResponses: number;
+  companionSum: number;
+  attendingGuests: number;       // 그 채널의 참석 응답 × (1 + 동행)
+  declined: number;
+  /** personal 만 숫자. 명단이 없으면 null. invite·rsvp_link 는 항상 null. */
+  unanswered: number | null;
+};
+
 type RsvpDashboard = {
   deadline: string | null;
   closed: boolean;
   totals: {
     attendingResponses: number;
     companionSum: number;
-    attendingGuests: number;     // 참석 응답 × (1 + 동행)
+    attendingGuests: number;     // 세 채널 합. 참석 응답 × (1 + 동행)
     declined: number;
-    unanswered: number | null;   // 명단이 없으면 null
+    unanswered: number | null;   // personal 과 같다. 명단이 없으면 null
+  };
+  /** 채널별 집계. 키는 personal | invite | rsvp_link. */
+  byChannel: {
+    personal: ChannelTotals;
+    invite: ChannelTotals;
+    rsvp_link: ChannelTotals;
   };
   byRecipient: Array<{
     recipientId: string;
+    channel: 'personal';
     listName: string;
     responseName: string | null;
     status: 'unanswered' | 'attending' | 'declined';
+    /** true 면 미응답·totals·byChannel.personal 에서 빠진다. 행은 남는다. */
+    revoked: boolean;
     companions: number;
     updatedAt: string | null;
     path: string | null;
@@ -461,6 +561,7 @@ type RsvpDashboard = {
 
 type PublicRsvpRow = {
   id: string;
+  channel: 'invite' | 'rsvp_link';
   name: string;
   attending: boolean;
   companions: number;
@@ -468,6 +569,8 @@ type PublicRsvpRow = {
   duplicateName: boolean;        // 같은 채널·같은 이름 2건 이상. 병합하지 않음
 };
 ```
+
+`totals` 는 `byChannel` 세 칸의 합이다. `unanswered` 만 `personal` 값을 쓴다. 폐기된 받는 사람은 `byChannel.personal` 과 `totals` 에 넣지 않는다. 미응답 목록은 `byRecipient` 에서 `revoked === false` 이고 `status === 'unanswered'` 인 행이다. 하객 화면에는 명단 이름을 그리지 않고, RSVP 이름 칸 미리 채우기에만 쓴다.
 
 호스트가 응답을 고치는 API 는 없다.
 
@@ -484,6 +587,22 @@ type PublicRsvpRow = {
 이 두 경로는 인증이 없다. 프론트 `createApiGuestDataSource` 가 헤더 없이 부른다. 본문은 발행 시점의 스냅샷이라, 자동 저장만으로는 바뀌지 않는다.
 
 `Cache-Control: public, max-age=60, stale-while-revalidate=86400`. CDN 이 이 값을 따르면 DB 가 잠깐 죽어도 직전 JSON 을 줄 수 있다. 정적 HTML 로 이미 구워진 페이지는 API 가 죽어도 그대로다. RSVP 만 `503` 이 될 수 있다.
+
+### 8.1 정적 페이지를 다시 굽는 방법
+
+하객 빌드는 `output: 'export'` 로 `/i/{slug}/index.html` 만 만든다. `/g/`, `/s/` 는 그 파일로 rewrite 하고, HTML 에는 받는 사람 이름·토큰·응답을 넣지 않는다(하객 계약 1절). 호스팅이 나중에 ISR 로 바뀌어도 같은 경로를 한 장만 다시 만든다.
+
+브라우저는 배포 비밀을 갖지 않는다. 발행 응답의 `staticRebuild` 는 화면 안내용이고, 실제 재생성은 빌드 워커가 한다.
+
+1. `STATIC_REBUILD_TOKEN` 을 이 서버와 워커에만 둔다. 비어 있으면 아래 경로는 `404 not_found`.
+2. `GET /v1/rebuilds?limit=50` 헤더 `Authorization: Bearer <STATIC_REBUILD_TOKEN>`. 토큰이 다르면 `401 unauthorized`. `200 { "rebuilds": Array<StaticRebuild & { createdAt: string }> }`. 아직 ack 하지 않은 것만, 오래된 순이다.
+3. 각 항목:
+   - `publish`, `apply`: `GET documentPath`(인증 없음)로 공개 JSON 을 받아 `pagePath` 의 `index.html` 을 다시 쓴다. ISR 호스트라면 `pagePath` 를 `revalidatePath` 에 넘긴다.
+   - `unpublish`, `delete`: 그 `pagePath` 를 정적 출력에서 뺀다. 다음 전체 내보내기는 `GET /v1/invitations` 에 슬러그가 없으면 그 페이지를 만들지 않는다.
+4. `POST /v1/rebuilds/ack` `{ "ids": ["..."] }` 같은 Bearer. `200 { "acked": number }`. 워커가 파일을 쓴 뒤에 호출한다. 호출 전에는 큐에 남는다.
+5. 게스트 요청 경로에서 DB 를 읽지 않는다. 그래서 DB 장애 중에도 마지막 HTML 이 보인다.
+
+워커가 전체 `next build` 를 다시 돌려도 된다. 큐는 바뀐 슬러그만 골라 굽기 위한 것이다. 호스트별 deploy hook URL 은 이 서버가 호출하지 않는다. 호스팅이 정해지면 워커가 그 hook 을 치면 된다.
 
 ## 9. 보관 · 알림 · 상한
 
@@ -528,7 +647,7 @@ type PublicRsvpRow = {
 - 주소 검색·좌표 변환(프론트 또는 추후 프록시). 서버는 `lat`·`lng` 를 저장만 한다
 - 카카오 공유·지도 SDK
 - 정적 지도 프록시, OG 이미지 렌더(프론트 `generate-og`)
-- ISR·CDN purge 호출(호스팅 결정 전). 공개 JSON 과 `Cache-Control` 만 제공
+- 호스트별 deploy hook 호출. 재생성 신호는 `staticRebuild` 와 `GET /v1/rebuilds` 다(8.1). HTML 생성은 프론트 빌드가 한다
 - 공용 RSVP 토큰 재발급, 응답 CSV, 신랑측·신부측 집계, 방명록
 - 실카카오 메일 발송(아웃박스 + 웹훅 자리만)
 
@@ -546,5 +665,10 @@ type PublicRsvpRow = {
 10. 공개 slug 목록은 인증 없이 배열이다.
 11. 사진 자동 저장은 `sort`, `focal`, `crop`, `filter` 를 받는다. `crop` 을 생략하면 전체 프레임 `{0,0,1,1}` 이다. 저장돼 있는 `crop`·`filter` 와 같으면 다시 만들지 않는다. 달라지면 다시 만들고, 그동안 이전 변종을 준다. 목록에서 빼도 삭제되지 않는다.
 12. 자동 저장은 전화·계좌의 미완성을 받는다. 형식은 발행 때 필드 오류로 본다.
+13. 카카오 첫 연결은 `linkIdentity({ provider: 'kakao' })` 다. 콜백 오류가 `Identity is already linked` 또는 `Identity is already linked to another user` 일 때만 익명 세션이 유지된다. 그 다음, `signInWithOAuth` 보다 먼저 `POST /v1/editor/claim-tickets` 를 호출한다(3.2).
+14. 발행·반영·발행 취소·영구 사용자 삭제는 `staticRebuild` 를 준다. 페이지를 다시 굽는 절차는 8.1 이다. 하객 HTML 에 명단 이름을 넣지 않는다.
+15. 설정 화면은 `GET/PATCH /v1/editor/invitations/:id/settings` 다. RSVP 끄기, 공용 RSVP 링크 끄기, 슬러그 변경은 `not_supported` 다. 마감만 작업 문서에 저장하고, 하객 화면은 `apply` 다음에 바뀐다.
+16. 광고 스위치는 `PATCH /v1/editor/settings` 이고 어드민만 된다. `showAds` 식은 세션과 같다.
+17. RSVP 집계의 `byChannel` 키는 `personal`, `invite`, `rsvp_link` 다. `totals` 는 그 합이다. 미응답은 폐기되지 않은 명단만 센다.
 
 자유 크롭 UI 는 없다. 초점은 사진마다 저장하고, 크롭은 전체 프레임이다. `givenName` 발행 필수는 소유자 결정 전까지 지금 규칙(비어 있으면 거절)을 유지한다. 사진 최대 장수가 editor-spec 과 다른 곳은 프론트의 후속 diff 를 기다린다. 그 전까지 이 문서가 구현 기준이다.
