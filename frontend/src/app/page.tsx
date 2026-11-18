@@ -1,4 +1,4 @@
-import { StartScreen } from '@/components/editor/start-screen';
+import StartScreen from '@/components/organisms/StartScreen';
 import { getGuestDataSource } from '@/data';
 
 export default async function HomePage() {

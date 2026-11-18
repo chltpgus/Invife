@@ -1,5 +1,8 @@
-import axios, { type AxiosInstance } from 'axios';
+import type { AxiosInstance } from 'axios';
+import { clientInstance } from '@/api/clientInstance';
+import type { ApiResult } from '@/api/instance/types';
 import type { RsvpContext, RsvpContextResult, RsvpResponse, RsvpSubmitBody, RsvpSubmitResult } from '@/domain/types';
+import type { RsvpDomain } from '@/domain/rsvp/api.type';
 
 export interface RsvpClient {
   context(input: { slug: string; token?: string }): Promise<RsvpContextResult>;
@@ -30,15 +33,10 @@ export function browserStore(): MemoryStore {
   };
 }
 
-export const apiHttp = axios.create({
-  validateStatus: () => true,
-  headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
-});
-
-export function createApiRsvpClient(baseUrl: string, http: AxiosInstance = apiHttp): RsvpClient {
+export function createApiRsvpClient(baseUrl: string, http?: AxiosInstance): RsvpClient {
   return {
     context(input) {
-      return postJson<RsvpContextResult>(http, `${baseUrl}/functions/v1/rsvp-context`, input, (reply) => {
+      return postJson<RsvpDomain.Context.Res, RsvpContextResult>(http, baseUrl, '/functions/v1/rsvp-context', input, (reply) => {
         if (reply.status < 400 && isRecord(reply.data) && 'status' in reply.data) return { ok: true, context: reply.data as RsvpContext };
         if (reply.status === 404) return { ok: false, code: 'not_found' };
         if (reply.status === 503) return { ok: false, code: 'unavailable' };
@@ -46,7 +44,7 @@ export function createApiRsvpClient(baseUrl: string, http: AxiosInstance = apiHt
       });
     },
     submit(body) {
-      return postJson<RsvpSubmitResult>(http, `${baseUrl}/functions/v1/rsvp`, body, (reply) => {
+      return postJson<RsvpDomain.Submit.Res, RsvpSubmitResult>(http, baseUrl, '/functions/v1/rsvp', body, (reply) => {
         if (reply.status < 400 && isRecord(reply.data) && 'response' in reply.data) {
           const bodyPayload = reply.data as { response: RsvpResponse; edited?: boolean; editKey?: string };
           return {
@@ -62,22 +60,26 @@ export function createApiRsvpClient(baseUrl: string, http: AxiosInstance = apiHt
   };
 }
 
-type Reply = { status: number; data: unknown; header(name: string): string | undefined };
+type Reply<T> = ApiResult<T>;
 
-async function postJson<T>(http: AxiosInstance, url: string, body: unknown, map: (reply: Reply) => T): Promise<T> {
+async function postJson<T, R>(http: AxiosInstance | undefined, baseUrl: string, path: string, body: unknown, map: (reply: Reply<T>) => R): Promise<R> {
   try {
-    const response = await http.post(url, body);
-    return map({
-      status: response.status,
-      data: response.data,
-      header(name) {
-        const value = response.headers[name.toLowerCase()];
-        if (Array.isArray(value)) return value[0];
-        return typeof value === 'string' ? value : undefined;
-      },
-    });
+    if (http) {
+      const response = await http.post<T>(`${baseUrl}${path}`, body);
+      return map({
+        status: response.status,
+        data: response.data,
+        retryAfter: response.status === 429 ? Number(response.headers['retry-after']) : undefined,
+        header(name) {
+          const value = response.headers[name.toLowerCase()];
+          if (Array.isArray(value)) return value[0];
+          return typeof value === 'string' ? value : undefined;
+        },
+      });
+    }
+    return map(await clientInstance.post<T>(path, { body }));
   } catch {
-    return { ok: false, code: 'network' } as T;
+    return { ok: false, code: 'network' } as R;
   }
 }
 
@@ -85,10 +87,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
-function readSubmitError(reply: Reply): RsvpSubmitResult {
+function readSubmitError(reply: Reply<unknown>): RsvpSubmitResult {
   const error = (reply.data as { error?: { code?: string; field?: string; reason?: string } } | null)?.error;
   const code = error?.code;
-  const retryAfter = Number(reply.header('retry-after'));
+  const retryAfter = reply.retryAfter ?? Number(reply.header('retry-after'));
   if (reply.status === 400 && code === 'validation') {
     return { ok: false, code: 'validation', field: error?.field, reason: error?.reason };
   }

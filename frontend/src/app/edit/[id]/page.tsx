@@ -1,4 +1,4 @@
-import { EditorScreen } from '@/components/editor/editor-screen';
+import EditorScreen from '@/components/organisms/EditorScreen';
 
 export function generateStaticParams() {
   return [{ id: 'local' }];
