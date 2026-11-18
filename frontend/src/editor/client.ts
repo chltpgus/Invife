@@ -6,9 +6,21 @@ import type {
   EditorInvitationSummary,
   EditorPhoto,
   PhotoStepResult,
+  AppSettingsResult,
+  ClaimDraftsResult,
+  ClaimTicketResult,
+  DeleteInvitationResult,
+  EditorSession,
+  HostNotice,
+  InvitationActionResult,
+  InvitationSettingsPatch,
+  InvitationSettingsResult,
+  KakaoLinkResult,
   PresignBody,
   PresignResult,
   PresignStep,
+  RecipientMutationResult,
+  RsvpDashboardResult,
 } from '@/editor/contract';
 
 /**
@@ -27,6 +39,25 @@ export interface EditorClient {
   getPhotos(invitationId: string): Promise<{ etag: string; photos: EditorPhoto[] } | null>;
   getPhoto(invitationId: string, photoId: string): Promise<{ etag: string; photo: EditorPhoto } | null>;
   deletePhoto(invitationId: string, photoId: string): Promise<PhotoStepResult>;
+  session(): Promise<EditorSession>;
+  appSettings(): Promise<AppSettingsResult>;
+  updateAppSettings(adsEnabled: boolean): Promise<AppSettingsResult>;
+  linkKakao(redirectTo: string): Promise<KakaoLinkResult>;
+  signInKakao(redirectTo: string): Promise<KakaoLinkResult>;
+  createClaimTicket(invitationIds: string[]): Promise<ClaimTicketResult>;
+  claimDrafts(ticket: string): Promise<ClaimDraftsResult>;
+  publish(id: string): Promise<InvitationActionResult>;
+  applyChanges(id: string): Promise<InvitationActionResult>;
+  unpublish(id: string): Promise<InvitationActionResult>;
+  deleteInvitation(id: string, confirm?: string): Promise<DeleteInvitationResult>;
+  invitationSettings(id: string): Promise<InvitationSettingsResult>;
+  updateInvitationSettings(id: string, body: InvitationSettingsPatch, ifMatch: string): Promise<InvitationSettingsResult>;
+  addRecipients(id: string, names: string[]): Promise<RecipientMutationResult>;
+  updateRecipient(id: string, recipientId: string, name: string): Promise<RecipientMutationResult>;
+  reissueRecipient(id: string, recipientId: string): Promise<RecipientMutationResult>;
+  revokeRecipient(id: string, recipientId: string): Promise<RecipientMutationResult>;
+  rsvpDashboard(id: string): Promise<RsvpDashboardResult>;
+  notices(): Promise<HostNotice[]>;
 }
 
 export function summarizeInvitation(invitation: EditorInvitation): EditorInvitationSummary {

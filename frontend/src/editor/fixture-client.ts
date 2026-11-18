@@ -3,6 +3,8 @@ import { summarizeInvitation, type EditorClient } from '@/editor/client';
 import type { AutosaveBody, AutosaveResult, CreateInvitationBody, EditorInvitation, EditorInvitationSummary, EditorPhoto, PhotoStepResult, PresignBody, PresignResult } from '@/editor/contract';
 import { applyAutosave, blankInvitation } from '@/editor/document';
 import { etagsMatch, stampUser } from '@/editor/etag';
+import { fixtureHostMethods, rememberOwner, visibleSummary, withRsvp } from '@/editor/fixture-host';
+import { browserHost, canEdit, memoryHost, type HostPersistence } from '@/editor/host';
 
 export type InvitationRepository = {
   list(): Promise<EditorInvitationSummary[]>;
@@ -31,6 +33,7 @@ export function createMemoryEditorClient(now = () => new Date()): EditorClient {
     },
     uploads,
     now,
+    memoryHost(),
   );
 }
 
@@ -55,6 +58,7 @@ export function createBrowserEditorClient(now = () => new Date()): EditorClient 
     },
     uploads,
     now,
+    browserHost(),
   );
 }
 
@@ -62,6 +66,7 @@ export function createStoredEditorClient(
   repo: InvitationRepository,
   uploads: Map<string, { invitationId: string; photoId: string; blob: Blob | null }>,
   now: () => Date,
+  host: HostPersistence = memoryHost(),
 ): EditorClient {
   let tail = Promise.resolve();
   const exclusive = <T>(task: () => Promise<T>): Promise<T> => {
@@ -70,16 +75,20 @@ export function createStoredEditorClient(
     return run;
   };
   return {
-    listInvitations() {
-      return repo.list();
+    async listInvitations() {
+      const items = await repo.list();
+      return items.filter((item) => visibleSummary(host, item)).map((item) => withRsvp(host, item));
     },
     async createInvitation(body: CreateInvitationBody) {
       const invitation = blankInvitation(body, now(), crypto.randomUUID(), newSlug());
       await repo.write(invitation);
+      rememberOwner(host, invitation.id);
       return invitation;
     },
-    getInvitation(id) {
-      return repo.read(id);
+    async getInvitation(id) {
+      const invitation = await repo.read(id);
+      if (!invitation || invitation.status === 'deleted' || !canEdit(host.load(), id)) return null;
+      return invitation;
     },
     async autosave(id, body: AutosaveBody, ifMatch): Promise<AutosaveResult> {
       return exclusive(async () => {
@@ -176,6 +185,7 @@ export function createStoredEditorClient(
       return { ok: true, invitation, etag: invitation.etag };
       });
     },
+    ...fixtureHostMethods(repo, host, now, exclusive),
   };
 }
 

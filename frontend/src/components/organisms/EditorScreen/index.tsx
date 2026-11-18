@@ -33,7 +33,6 @@ import {
   PREVIEW_DEBOUNCE_MS,
   fieldIssues,
   previewInvitation,
-  publishIssues,
   sectionMark,
   type EditorDraft,
   type FieldIssue,
@@ -83,7 +82,8 @@ function EditorWorkspace({ routeId }: { routeId: string }) {
   const [open, setOpen] = useState<SectionId>('cover');
   const [wide, setWide] = useState(false);
   const [reveal, setReveal] = useState(false);
-  const [sheet, setSheet] = useState<'publish' | 'theme' | null>(null);
+  const [sheet, setSheet] = useState<'theme' | null>(null);
+  const [dirtySinceLoad, setDirtySinceLoad] = useState(false);
   const [full, setFull] = useState(false);
   const [fullEnvelope, setFullEnvelope] = useState(true);
   const [liveEnvelope, setLiveEnvelope] = useState(false);
@@ -142,6 +142,11 @@ function EditorWorkspace({ routeId }: { routeId: string }) {
   }, []);
 
   useEffect(() => {
+    const hash = window.location.hash.replace('#section-', '');
+    if (sections.some((section) => section.id === hash)) setOpen(hash as SectionId);
+  }, []);
+
+  useEffect(() => {
     if (!lit) return;
     const timer = window.setTimeout(() => setLit(null), 1000);
     return () => window.clearTimeout(timer);
@@ -149,6 +154,7 @@ function EditorWorkspace({ routeId }: { routeId: string }) {
 
   function change(next: EditorDraft, immediate = false) {
     setDraft(next);
+    setDirtySinceLoad(true);
     autosave.touch(next);
     if (immediate) window.setTimeout(() => void autosave.flush(), 0);
   }
@@ -193,13 +199,15 @@ function EditorWorkspace({ routeId }: { routeId: string }) {
   }
 
   const issues = fieldIssues(draft, now);
-  const required = publishIssues(issues);
-  const others = issues.filter((issue) => !issue.publish);
   const groom = draft.invitation.groom.name.trim();
   const bride = draft.invitation.bride.name.trim();
   const title = groom && bride ? `${groom} · ${bride}` : '새 청첩장';
   const preview = previewInvitation(previewDraft);
-  const publishLabel = required.length > 0 ? `필수 항목 ${required.length}개를 채워 주세요` : '발행은 다음 단계에서 열려요';
+  const server = invitationQuery.data;
+  const published = server?.status === 'published';
+  const pendingChanges = Boolean(published && (server?.hasUnpublishedChanges || dirtySinceLoad));
+  const publishHref = published && !pendingChanges ? `/edit/${invitationId}/published/` : `/edit/${invitationId}/publish/`;
+  const publishText = published ? (pendingChanges ? '변경 사항 반영' : '공유') : '발행하기';
 
   return (
     <main className={`app-root ed-shell ${keyboard ? 'is-keyboard' : ''}`}>
@@ -209,7 +217,7 @@ function EditorWorkspace({ routeId }: { routeId: string }) {
         </Link>
         <h1>{title}</h1>
         <SaveStatus status={autosave.status} hold={autosave.holdSaved} now={now} onRetry={() => void autosave.flush()} />
-        <button type="button" className="ed-btn ed-publish" onClick={() => { setReveal(true); setSheet('publish'); }}>발행하기</button>
+        <Link className="ed-btn ed-publish" href={publishHref} onClick={() => setReveal(true)}>{publishText}</Link>
       </header>
       {banner ? (
         <p className="ed-banner">
@@ -292,7 +300,7 @@ function EditorWorkspace({ routeId }: { routeId: string }) {
         <button type="button" className="ed-btn-secondary" onClick={() => { setFullEnvelope(true); setLiveEnvelope(false); setFull(true); }}>
           <Eye size={18} /> 미리보기
         </button>
-        <button type="button" className="ed-btn" onClick={() => { setReveal(true); setSheet('publish'); }}>발행하기</button>
+        <Link className="ed-btn" href={publishHref} onClick={() => setReveal(true)}>{publishText}</Link>
       </div>
       <button type="button" className="ed-btn ed-float" onClick={() => { setFullEnvelope(false); setFull(true); }}>
         <Eye size={18} /> 미리보기
@@ -320,38 +328,8 @@ function EditorWorkspace({ routeId }: { routeId: string }) {
           <p className="ed-caption">나중에 언제든 바꿀 수 있어요</p>
         </Sheet>
       ) : null}
-      {sheet === 'publish' ? (
-        <Sheet title="발행 전 확인" onClose={() => setSheet(null)}>
-          <ul>
-            {required.map((issue) => (
-              <li key={issue.id}>
-                <button type="button" className="ed-btn-text" onClick={() => jump(issue)}>{issue.message}</button>
-              </li>
-            ))}
-            {others.map((issue) => (
-              <li key={issue.id}>
-                <button type="button" className="ed-btn-text" onClick={() => jump(issue)}>{issue.message}</button>
-              </li>
-            ))}
-          </ul>
-          {required.length === 0 && others.length === 0 ? <p>필수 항목이 모두 채워졌어요.</p> : null}
-          <p className="ed-caption">{hiddenSections(draft)}</p>
-          <button type="button" className="ed-btn ed-wide" disabled aria-describedby="publish-wait">{publishLabel}</button>
-          <p id="publish-wait" className="ed-caption">카카오 로그인과 발행은 다음 단계에서 연결돼요. 입력한 내용은 이 브라우저에 저장돼 있어요.</p>
-        </Sheet>
-      ) : null}
     </main>
   );
-
-  function jump(issue: FieldIssue) {
-    setOpen(issue.section);
-    setLit(issue.section);
-    setSheet(null);
-    window.setTimeout(() => {
-      document.getElementById(issue.id)?.focus();
-      document.getElementById(`section-${issue.section}`)?.scrollIntoView({ block: 'start' });
-    }, 30);
-  }
 }
 
 function Frame({
@@ -487,17 +465,6 @@ function summary(draft: EditorDraft, section: SectionId): string {
   if (section === 'directions') return invitation.ceremony.address?.split('\n')[0] || '주소';
   if (section === 'accounts') return `계좌 ${invitation.accounts.length}개`;
   return invitation.rsvp.deadline ? '응답 마감' : '예식 날짜를 고르면 전날 밤 12시로 맞춰져요';
-}
-
-function hiddenSections(draft: EditorDraft): string {
-  const hidden: string[] = [];
-  if (!draft.invitation.greeting?.trim()) hidden.push('인사말');
-  const families = draft.invitation.families;
-  const parentNamed = [families.groom?.father, families.groom?.mother, families.bride?.father, families.bride?.mother].some((parent) => parent?.name.trim());
-  if (!parentNamed) hidden.push('혼주 성함');
-  if (!draft.invitation.accounts.some((account) => account.holder.trim() && account.bank.trim() && account.number.trim())) hidden.push('마음 전하실 곳');
-  if (hidden.length === 0) return '숨겨지는 섹션은 없어요.';
-  return `비어 있어 숨겨지는 섹션: ${hidden.join(', ')}`;
 }
 
 function useDraftId(routeId: string): { id: string; ready: boolean } {

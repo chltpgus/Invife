@@ -21,8 +21,18 @@ describe('호스트 설정', () => {
       '/i/:slug/g/:token/',
       '/i/:slug/s/:token',
       '/i/:slug/s/:token/',
+      '/edit/:id/publish',
+      '/edit/:id/publish/',
+      '/edit/:id/published',
+      '/edit/:id/published/',
       '/edit/:id',
       '/edit/:id/',
+      '/dashboard/:id/guests',
+      '/dashboard/:id/guests/',
+      '/dashboard/:id/rsvp',
+      '/dashboard/:id/rsvp/',
+      '/dashboard/:id/settings',
+      '/dashboard/:id/settings/',
     ]);
     const shared = vercel.headers[0]?.headers ?? [];
     expect(shared).toEqual([

@@ -3,5 +3,15 @@
 /i/:slug/g/:token/  /i/:slug/index.html   200
 /i/:slug/s/:token   /i/:slug/index.html   200
 /i/:slug/s/:token/  /i/:slug/index.html   200
-/edit/:id           /edit/local/index.html  200
-/edit/:id/          /edit/local/index.html  200
+/edit/:id/publish        /edit/local/publish/index.html   200
+/edit/:id/publish/       /edit/local/publish/index.html   200
+/edit/:id/published      /edit/local/published/index.html 200
+/edit/:id/published/     /edit/local/published/index.html 200
+/edit/:id                /edit/local/index.html           200
+/edit/:id/               /edit/local/index.html           200
+/dashboard/:id/guests    /dashboard/local/guests/index.html 200
+/dashboard/:id/guests/   /dashboard/local/guests/index.html 200
+/dashboard/:id/rsvp      /dashboard/local/rsvp/index.html 200
+/dashboard/:id/rsvp/     /dashboard/local/rsvp/index.html 200
+/dashboard/:id/settings  /dashboard/local/settings/index.html 200
+/dashboard/:id/settings/ /dashboard/local/settings/index.html 200

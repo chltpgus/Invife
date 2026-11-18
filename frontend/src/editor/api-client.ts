@@ -3,6 +3,7 @@ import type { ApiResult } from '@/api/instance/types';
 import type { EditorClient } from '@/editor/client';
 import type { AutosaveResult, PhotoStepResult } from '@/editor/contract';
 import { readEtag, withEtag } from '@/editor/etag';
+import { apiHostMethods } from '@/editor/host-api';
 import type { EditorDomain } from '@/domain/editor/api.type';
 
 /**
@@ -84,6 +85,7 @@ export function createApiEditorClient(): EditorClient {
       const invitation = withEtag(loaded.data.invitation, readEtag(loaded.header('etag'), loaded.data.etag));
       return { ok: true, invitation, etag: invitation.etag };
     },
+    ...apiHostMethods(http),
   };
 }
 
