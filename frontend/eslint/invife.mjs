@@ -24,20 +24,22 @@ const LEGACY_COMPONENTS = new Set([
   'when.tsx',
 ]);
 
-const fetchMessage = 'fetch를 쓰지 마세요. src/api/createInstance.ts로 만든 클라이언트를 도메인 query.ts에서만 호출하세요.';
+const fetchMessage = 'fetch를 쓰지 마세요. src/api/createInstance.ts로 만든 clientInstance를 도메인 query.ts에서만 호출하세요.';
 const axiosMessage =
-  'axios는 src/api/createInstance.ts에서만 가져오세요. 화면은 src/api/<도메인>/query.ts가 내보내는 useXxx 훅을 씁니다.';
+  'axios는 src/api/createInstance.ts에서만 가져오세요. 화면은 src/domain/<도메인>/query.ts가 내보내는 useXxx 훅을 씁니다.';
 const clientMessage =
-  'apiClient와 createInstance는 src/api/<도메인>/query.ts에서만 쓰세요. 참석 전송은 이미 있는 src/rsvp/client.ts가 맡습니다. 화면은 useXxx 훅만 부릅니다.';
+  'createInstance는 src/api/clientInstance.ts에서만 쓰세요. clientInstance는 src/domain/<도메인>/query.ts와 src/rsvp/client.ts, src/editor/api-client.ts, src/data/api-source.ts에서만 쓰세요. 화면은 useXxx 훅만 부릅니다.';
 const queryMessage =
-  'useQuery와 useMutation은 src/api/<도메인>/query.ts 안에서만 부르세요. 컴포넌트는 그 파일의 useXxx 훅을 씁니다. 키는 queryKey.ts, 요청 타입은 api.type.ts에 두세요.';
+  'useQuery와 useMutation은 src/domain/<도메인>/query.ts 안에서만 부르세요. 컴포넌트는 그 파일의 useXxx 훅을 씁니다. 키는 queryKey.ts, 요청 타입은 api.type.ts에 두세요.';
 const effectMessage =
-  'useEffect 안에서 서버 데이터를 가져오지 마세요. 조회와 저장은 src/api/<도메인>/query.ts의 useQuery, useMutation으로 두고 컴포넌트는 그 훅을 부르세요. DOM이나 애니메이션 타이머는 그대로 두어도 됩니다.';
+  'useEffect 안에서 서버 데이터를 가져오지 마세요. 조회와 저장은 src/domain/<도메인>/query.ts의 useQuery, useMutation으로 두고 컴포넌트는 그 훅을 부르세요. DOM이나 애니메이션 타이머는 그대로 두어도 됩니다.';
 const styleMessage =
   '스타일은 Tailwind 클래스로 주세요. 인라인 style은 사진의 objectFit, objectPosition, backgroundImage, 또는 CSS 변수(--*)만 허용합니다.';
 const folderMessage =
-  '컴포넌트는 src/components/atoms|molecules|organisms/<파스칼이름>/index.tsx에 두고 default export 하세요. 조각은 atoms, 한 구역은 molecules, 한 화면은 organisms입니다. 기존 파일 목록에 이름을 넣지 마세요.';
+  '컴포넌트는 src/components/atoms|molecules|organisms/<파스칼이름>/index.tsx에 두고 default export 하세요. 아이콘은 atoms/svg/<파스칼이름>/index.tsx입니다. 조각은 atoms, 한 구역은 molecules, 한 화면은 organisms입니다. 기존 파일 목록에 이름을 넣지 마세요.';
 const defaultExportMessage = '이 컴포넌트 폴더의 index.tsx는 default export 하세요.';
+const COMPONENT_ENTRY = /^(?:(?:atoms|molecules|organisms)\/[A-Z][A-Za-z0-9]*|atoms\/svg\/[A-Z][A-Za-z0-9]*)\/index\.tsx$/;
+const COMPONENT_HELPERS = new Set(['molecules/editorForm/shared.tsx']);
 const crossMessage = 'frontend와 backend는 서로 import하지 마세요. 값은 docs/api 계약과 HTTP로만 맞춥니다.';
 
 export const invifeRules = {
@@ -62,20 +64,29 @@ function isCreateInstance(filename) {
   return norm(filename).endsWith('/src/api/createInstance.ts');
 }
 
-function isApiQuery(filename) {
-  return /\/src\/api\/(?:[^/]+\/)*query\.ts$/.test(norm(filename));
+function isDomainQuery(filename) {
+  return /\/src\/domain\/[^/]+\/query\.ts$/.test(norm(filename));
 }
 
-function isRsvpTransport(filename) {
-  return norm(filename).endsWith('/src/rsvp/client.ts');
+function isClientInstance(filename) {
+  return norm(filename).endsWith('/src/api/clientInstance.ts');
+}
+
+function isTransport(filename) {
+  const name = norm(filename);
+  return name.endsWith('/src/rsvp/client.ts') || name.endsWith('/src/editor/api-client.ts') || name.endsWith('/src/data/api-source.ts');
 }
 
 function allowsAxiosValue(filename) {
   return isCreateInstance(filename) || isTest(filename);
 }
 
-function allowsApiClient(filename) {
-  return isApiQuery(filename) || isCreateInstance(filename) || isRsvpTransport(filename) || isTest(filename);
+function allowsCreateInstance(filename) {
+  return isCreateInstance(filename) || isClientInstance(filename) || isTest(filename);
+}
+
+function allowsClientInstance(filename) {
+  return isClientInstance(filename) || isDomainQuery(filename) || isTransport(filename) || isTest(filename);
 }
 
 function componentRel(filename) {
@@ -112,7 +123,7 @@ function isDataCall(node) {
   const prop = callee.property.name;
   const object = callee.object;
   if (object.type !== 'Identifier') return false;
-  if ((object.name === 'apiClient' || object.name === 'apiHttp' || object.name === 'http') && HTTP_METHODS.has(prop)) return true;
+  if ((object.name === 'apiClient' || object.name === 'apiHttp' || object.name === 'http' || object.name === 'clientInstance') && HTTP_METHODS.has(prop)) return true;
   if ((object.name === 'client' || object.name.endsWith('Client')) && CLIENT_METHODS.has(prop)) return true;
   return false;
 }
@@ -210,8 +221,13 @@ const plugin = {
           if (node.specifiers.some((specifier) => isValueSpecifier(node, specifier))) context.report({ node, messageId: 'axios' });
           return;
         }
-        if (!allowsApiClient(context.filename) && (node.source.value === '@/api/createInstance' || node.source.value.endsWith('/api/createInstance'))) {
+        if ((node.source.value === '@/api/createInstance' || node.source.value.endsWith('/api/createInstance')) && !allowsCreateInstance(context.filename)) {
           if (node.specifiers.some((specifier) => isValueSpecifier(node, specifier) && (importedName(specifier) === 'apiClient' || importedName(specifier) === 'createInstance'))) {
+            context.report({ node, messageId: 'client' });
+          }
+        }
+        if ((node.source.value === '@/api/clientInstance' || node.source.value.endsWith('/api/clientInstance')) && !allowsClientInstance(context.filename)) {
+          if (node.specifiers.some((specifier) => isValueSpecifier(node, specifier) && importedName(specifier) === 'clientInstance')) {
             context.report({ node, messageId: 'client' });
           }
         }
@@ -222,7 +238,7 @@ const plugin = {
     })),
     'no-query-outside-api': problem('useQuery는 query.ts만', { query: queryMessage }, (context) => ({
       ImportDeclaration(node) {
-        if (isApiQuery(context.filename) || node.source.value !== '@tanstack/react-query') return;
+        if (isDomainQuery(context.filename) || node.source.value !== '@tanstack/react-query') return;
         for (const specifier of node.specifiers) {
           if (specifier.type === 'ImportSpecifier' && QUERY_HOOKS.has(importedName(specifier))) {
             context.report({ node: specifier, messageId: 'query' });
@@ -230,7 +246,7 @@ const plugin = {
         }
       },
       CallExpression(node) {
-        if (isApiQuery(context.filename)) return;
+        if (isDomainQuery(context.filename)) return;
         const callee = node.callee;
         const name = callee.type === 'Identifier' ? callee.name : callee.type === 'MemberExpression' && !callee.computed && callee.property.type === 'Identifier' ? callee.property.name : '';
         if (QUERY_HOOKS.has(name)) context.report({ node, messageId: 'query' });
@@ -261,7 +277,8 @@ const plugin = {
         const rel = componentRel(context.filename);
         if (!rel || !rel.endsWith('.tsx')) return;
         if (!rel.includes('/') && LEGACY_COMPONENTS.has(rel)) return;
-        if (!/^(atoms|molecules|organisms)\/[A-Z][A-Za-z0-9]*\/index\.tsx$/.test(rel)) {
+        if (COMPONENT_HELPERS.has(rel)) return;
+        if (!COMPONENT_ENTRY.test(rel)) {
           context.report({ node, messageId: 'folder' });
           return;
         }

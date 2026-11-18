@@ -21,6 +21,7 @@
     "samples": "tsx scripts/generate-samples.ts"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.119.0",
     "@tanstack/react-query": "^5.107.2",
     "axios": "^1.21.1",
     "next": "^15.5.4",

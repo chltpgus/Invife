@@ -31,7 +31,7 @@ export function Box() {
   });
 
   it('query.ts와 createInstance와 테스트는 허용한다', () => {
-    const query = join(root, 'src/api/rsvp/query.ts');
+    const query = join(root, 'src/domain/rsvp/query.ts');
     expect(
       ids(
         `import { useMutation, useQuery } from '@tanstack/react-query';
@@ -47,6 +47,13 @@ export function useSave() { return useMutation({ mutationFn: async () => 1 }); }
     expect(ids(`import axios from 'axios';\nexport const http = axios.create();\n`, join(root, 'src/rsvp/api-client.test.ts'))).not.toContain(
       'invife/no-axios-outside-api',
     );
+    expect(
+      ids(`import { createInstance } from '@/api/createInstance';\nexport const clientInstance = createInstance({});\n`, join(root, 'src/api/clientInstance.ts')),
+    ).not.toContain('invife/no-axios-outside-api');
+    expect(ids(`import { clientInstance } from '@/api/clientInstance';\nexport const http = clientInstance;\n`, join(root, 'src/data/api-source.ts'))).not.toContain(
+      'invife/no-axios-outside-api',
+    );
+    expect(ids(`import { clientInstance } from '@/api/clientInstance';\nexport const http = clientInstance;\n`, component)).toContain('invife/no-axios-outside-api');
   });
 
   it('effect 안의 조회만 막고 타이머는 둔다', () => {
@@ -95,6 +102,9 @@ export function Box() {
     const file = join(root, 'src/components/atoms/Seal/index.tsx');
     expect(ids(`export function Seal() { return null; }\n`, file)).toContain('invife/component-folder');
     expect(ids(`export default function Seal() { return null; }\n`, file)).not.toContain('invife/component-folder');
+    expect(ids(`export default function Check() { return null; }\n`, join(root, 'src/components/atoms/svg/Check/index.tsx'))).not.toContain(
+      'invife/component-folder',
+    );
   });
 
   it('backend import를 막는다', () => {
@@ -104,7 +114,7 @@ export function Box() {
   });
 
   it('현재 참석 칸은 통과한다', () => {
-    const file = join(root, 'src/components/rsvp-section.tsx');
+    const file = join(root, 'src/components/organisms/RsvpSection/index.tsx');
     expect(lintSource(readFileSync(file, 'utf8'), file)).toEqual([]);
   });
 });

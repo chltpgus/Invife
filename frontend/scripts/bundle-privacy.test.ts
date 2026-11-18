@@ -14,7 +14,7 @@ function apiAlias(file: string): string | null {
 
 describe('샘플 하객 이름', () => {
   it('api 치환을 적용한 페이지 그래프에 없다', () => {
-    const entry = join(root, 'src/components/rsvp-section.tsx');
+    const entry = join(root, 'src/components/organisms/RsvpSection/index.tsx');
     const names = sampleDirectory.flatMap((item) => item.recipients.map((person) => person.name));
     const bundled = reachable(entry, apiAlias)
       .map((file) => readFileSync(file, 'utf8'))

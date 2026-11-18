@@ -7,6 +7,7 @@ const tokens = require('../docs/design/tokens.json') as {
   color: {
     theme: Record<string, GuestTheme>;
     shared: { error: string };
+    app: Record<string, string>;
   };
   font: { serif: { family: string }; sans: { family: string } };
   space: Record<string, number>;
@@ -67,6 +68,7 @@ const config: Config = {
         'on-accent': 'var(--guest-on-accent)',
         outer: 'var(--guest-outer)',
         error: tokens.color.shared.error,
+        app: tokens.color.app,
       },
       fontFamily: {
         serif: family(tokens.font.serif.family),
@@ -82,6 +84,12 @@ const config: Config = {
         body: fontSize('body'),
         label: fontSize('label'),
         caption: fontSize('caption'),
+        'app-title': fontSize('appTitle'),
+        'app-section': fontSize('appSection'),
+        'app-body': fontSize('appBody'),
+        'app-input': fontSize('appInputMobile'),
+        'app-label': fontSize('appLabel'),
+        'app-caption': fontSize('appCaption'),
       },
       borderRadius: {
         sm: `${tokens.radius.sm}px`,
@@ -94,6 +102,10 @@ const config: Config = {
         envelope: tokens.shadow.envelope,
         floating: tokens.shadow.floating,
         toast: tokens.shadow.toast,
+        card: tokens.shadow.card,
+        dialog: tokens.shadow.dialog,
+        sheet: tokens.shadow.sheet,
+        'preview-frame': tokens.shadow.previewFrame,
       },
       maxWidth: {
         column: '430px',
@@ -113,7 +125,26 @@ const config: Config = {
       const sage = tokens.color.theme.sage;
       const mist = tokens.color.theme.mist;
       addBase({
-        ':root': { '--drop-envelope': tokens.shadow.envelope },
+        ':root': {
+          '--drop-envelope': tokens.shadow.envelope,
+          '--app-bg': tokens.color.app.bg,
+          '--app-surface': tokens.color.app.surface,
+          '--app-sunken': tokens.color.app.sunken,
+          '--app-selected': tokens.color.app.selected,
+          '--app-text': tokens.color.app.text,
+          '--app-text2': tokens.color.app.text2,
+          '--app-line': tokens.color.app.line,
+          '--app-border': tokens.color.app.border,
+          '--app-primary': tokens.color.app.primary,
+          '--app-primary-pressed': tokens.color.app.primaryPressed,
+          '--app-on-primary': tokens.color.app.onPrimary,
+          '--app-focus': tokens.color.app.focus,
+          '--app-success': tokens.color.app.success,
+          '--app-warning': tokens.color.app.warning,
+          '--app-error': tokens.color.app.error,
+          '--app-info': tokens.color.app.info,
+          '--app-scrim': tokens.color.app.scrim,
+        },
         ':root, [data-theme="ivory"]': guestVars(ivory),
         '[data-theme="sage"]': guestVars(sage),
         '[data-theme="mist"]': guestVars(mist),
